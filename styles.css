@@ -207,8 +207,41 @@ footer{margin-top:40px;font-family:var(--mono);font-size:11px;color:var(--ink-so
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 canvas#work{display:none}
 
+/* ---- view routing ---- */
+.view-nav{display:inline-flex;margin-top:20px;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.view-tab{
+  font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  padding:10px 20px;border:none;background:var(--surface-2);color:var(--ink-soft);cursor:pointer;
+  transition:background .12s,color .12s;
+}
+.view-tab+.view-tab{border-left:1px solid var(--line)}
+.view-tab.active{background:var(--ink);color:var(--surface)}
+.view-tab:hover:not(.active){background:var(--surface);color:var(--ink)}
+
 /* ---- inventory ---- */
 .inv-divider{border:none;border-top:1px solid var(--line-soft);margin:20px 0}
+.inv-footer-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.inv-view-link{
+  font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.04em;
+  color:var(--teal);text-decoration:none;
+}
+.inv-view-link:hover{text-decoration:underline}
+#inv-table-wrap{overflow-x:auto;margin-top:4px}
+.inv-table{width:100%;border-collapse:collapse;font-size:13px}
+.inv-table th{
+  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:9px 12px;text-align:left;background:var(--ink);color:var(--surface);white-space:nowrap;
+}
+.inv-table td{
+  padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top;word-break:break-word;
+}
+.inv-table tr:last-child td{border-bottom:none}
+.inv-table tbody tr:hover td{background:var(--surface)}
+.inv-id{font-family:var(--mono);font-size:11px;color:var(--pigment-deep);white-space:nowrap}
+.inv-date{font-family:var(--mono);font-size:11px;color:var(--ink-soft);white-space:nowrap}
+.inv-notes{max-width:200px;color:var(--ink-soft);font-size:12px}
+.inv-table a{color:var(--teal);font-family:var(--mono);font-size:12px;text-decoration:none}
+.inv-table a:hover{text-decoration:underline}
 .inv-notice{
   font-size:14px;color:var(--ink-soft);line-height:1.65;margin-bottom:0;
 }
