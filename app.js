@@ -475,13 +475,11 @@
   }
 
   function invShow(name){
-    $('#inv-panel').classList.add('show');
+    $('#inv-save-section').style.display='';
     $('#inv-save').disabled=false;
     invSetStatus('','');
     $('#inv-title').value=name;
-    if(!invConfigured()){ invSetUI('unconfigured'); return; }
-    if(!inv.token){ invSetUI('signedout'); return; }
-    invSetUI('signedin');
+    if(!inv.token) return; // panel already shows sign-in; form will appear after sign-in
     invSetStatus('Refreshing…','');
     invWithRetry(invLoad)
       .then(()=>invSetStatus('',''))
@@ -555,4 +553,10 @@
       btn.disabled=false;
     }
   });
+
+  // Initialize inventory panel on page load (sign-in is available immediately)
+  (function invInit(){
+    if(!invConfigured()){ invSetUI('unconfigured'); return; }
+    invSetUI('signedout');
+  })();
 })();

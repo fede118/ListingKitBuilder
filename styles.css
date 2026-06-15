@@ -208,8 +208,7 @@ footer{margin-top:40px;font-family:var(--mono);font-size:11px;color:var(--ink-so
 canvas#work{display:none}
 
 /* ---- inventory ---- */
-#inv-panel{display:none}
-#inv-panel.show{display:block}
+.inv-divider{border:none;border-top:1px solid var(--line-soft);margin:20px 0}
 .inv-notice{
   font-size:14px;color:var(--ink-soft);line-height:1.65;margin-bottom:0;
 }
