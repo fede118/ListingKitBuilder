@@ -137,11 +137,67 @@
     </div>
   </section>
 
-  <footer>Runs entirely in your browser · no internet, no uploads, no accounts</footer>
+  <!-- ===== INVENTORY ===== -->
+  <section class="panel" id="inv-panel">
+    <div class="panel-head">
+      <span class="tag" style="background:var(--teal)">Inv</span>
+      <h2>Save to inventory</h2>
+      <span class="hint">Track this design in your Google Sheet</span>
+    </div>
+    <div class="panel-body">
+
+      <div id="inv-unconfigured" style="display:none">
+        <p class="inv-notice">Inventory not configured — paste your Google Cloud Client ID into <code>GOOGLE_CLIENT_ID</code> in <code>app.js</code> to enable this feature.</p>
+      </div>
+
+      <div id="inv-signedout">
+        <p class="inv-notice">Sign in with Google to save this design to a personal inventory spreadsheet in your own Drive. The app only touches files it creates itself, using the <code>drive.file</code> scope — it can never read your other Drive files.</p>
+        <button class="build" id="inv-signin" style="margin-top:14px;width:auto;padding:14px 28px;font-size:15px">
+          Sign in with Google <span class="arrow">→</span>
+        </button>
+      </div>
+
+      <div id="inv-signedin" style="display:none">
+        <div id="inv-summary"></div>
+        <div class="grid2">
+          <div>
+            <span class="field-label">Category</span>
+            <select id="inv-cat" class="inv-select" style="display:none"></select>
+            <input type="text" id="inv-cat-new" placeholder="e.g. Florals">
+          </div>
+          <div>
+            <span class="field-label">Title</span>
+            <input type="text" id="inv-title">
+          </div>
+        </div>
+        <div class="grid2" style="margin-top:14px">
+          <div>
+            <span class="field-label">Source Link <span class="field-note">optional</span></span>
+            <input type="text" id="inv-link" placeholder="https://…">
+          </div>
+          <div>
+            <span class="field-label">Notes <span class="field-note">optional</span></span>
+            <input type="text" id="inv-notes" placeholder="">
+          </div>
+        </div>
+        <div class="inv-actions">
+          <button class="build" id="inv-save" style="margin-top:0;width:auto;padding:14px 28px;font-size:15px">
+            Save to inventory <span class="arrow">→</span>
+          </button>
+          <button class="inv-signout-btn" id="inv-signout">Sign out</button>
+          <span id="inv-status" class="inv-status"></span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer>Runs entirely in your browser · image data never leaves your device · Drive inventory is optional</footer>
 </div>
 
 <canvas id="work"></canvas>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="jszip.min.js"></script>
 <script src="app.js"></script>
 </body>

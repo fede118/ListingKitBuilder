@@ -296,5 +296,263 @@
     wireDownload($('#dl-store'), async()=>state.blobs.storeZip, `${name}-storefront.zip`);
 
     $('#output').classList.add('show');
+    invShow(name);
   }
+
+  // =====================================================================
+  // GOOGLE SHEETS INVENTORY
+  // =====================================================================
+  // Before this works, complete these one-time steps in Google Cloud Console
+  // (https://console.cloud.google.com):
+  //
+  //   1. Create a project → Enable "Google Sheets API" + "Google Drive API".
+  //   2. APIs & Services → OAuth consent screen → External.
+  //      Add your own Google account under "Test users".
+  //   3. APIs & Services → Credentials → Create Credentials →
+  //      OAuth 2.0 Client ID → Web application.
+  //      Add your GitHub Pages origin to "Authorized JavaScript origins"
+  //      (e.g. https://<username>.github.io).
+  //   4. Copy the generated Client ID and paste it below.
+  // =====================================================================
+
+  const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID'; // <-- paste your client ID here
+  const INV_SHEET_NAME   = 'Pattern Studio Inventory';
+  const INV_FOLDER_NAME  = 'Pattern Studio';
+  const INV_ID_PREFIX    = 'P';
+  const INV_ID_WIDTH     = 6;
+  const INV_HEADERS      = ['ID','Category','Title','Date Added','Source Link','Notes'];
+
+  const inv = {
+    token: null,
+    tokenClient: null,
+    spreadsheetId: localStorage.getItem('ps_sheet') || null,
+    folderId:      localStorage.getItem('ps_folder') || null,
+    authResolve: null,
+    authReject:  null
+  };
+
+  function invConfigured(){
+    return GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID';
+  }
+
+  // ---- GIS token client ----
+  function invInitClient(){
+    if(inv.tokenClient || typeof google==='undefined' || !google.accounts) return;
+    inv.tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      callback: resp => {
+        if(resp.error){ if(inv.authReject) inv.authReject(new Error(resp.error)); }
+        else           { inv.token = resp.access_token; if(inv.authResolve) inv.authResolve(); }
+        inv.authResolve = inv.authReject = null;
+      }
+    });
+  }
+
+  function invRequestToken(silent){
+    return new Promise((res, rej) => {
+      invInitClient();
+      if(!inv.tokenClient){ rej(new Error('Google Identity Services not ready — try again in a moment.')); return; }
+      inv.authResolve = res; inv.authReject = rej;
+      inv.tokenClient.requestAccessToken({ prompt: silent ? '' : undefined });
+    });
+  }
+
+  // ---- API helpers ----
+  async function invCall(url, opts={}){
+    const r = await fetch(url, {
+      ...opts,
+      headers:{ 'Authorization':'Bearer '+inv.token, 'Content-Type':'application/json', ...(opts.headers||{}) }
+    });
+    if(r.status===401){ const e=new Error('auth'); e.status=401; throw e; }
+    if(!r.ok){
+      let m='API error '+r.status;
+      try{ const j=await r.json(); m=j.error?.message||m; }catch(_){}
+      throw new Error(m);
+    }
+    return r.json();
+  }
+
+  async function invWithRetry(fn){
+    try{ return await fn(); }
+    catch(e){ if(e.status===401){ await invRequestToken(true); return fn(); } throw e; }
+  }
+
+  // ---- sheet & folder provisioning ----
+  async function invEnsureFolder(){
+    if(inv.folderId){
+      try{ await invCall(`https://www.googleapis.com/drive/v3/files/${inv.folderId}?fields=id`); return; }
+      catch(e){ if(e.status!==401){ inv.folderId=null; localStorage.removeItem('ps_folder'); } else throw e; }
+    }
+    const q = encodeURIComponent(`name='${INV_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const list = await invCall(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`);
+    if(list.files?.length){ inv.folderId=list.files[0].id; localStorage.setItem('ps_folder',inv.folderId); return; }
+    const f = await invCall('https://www.googleapis.com/drive/v3/files',{
+      method:'POST', body:JSON.stringify({name:INV_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'})
+    });
+    inv.folderId=f.id; localStorage.setItem('ps_folder',inv.folderId);
+  }
+
+  async function invEnsureSheet(){
+    if(inv.spreadsheetId){
+      try{ await invCall(`https://www.googleapis.com/drive/v3/files/${inv.spreadsheetId}?fields=id`); return; }
+      catch(e){ if(e.status!==401){ inv.spreadsheetId=null; localStorage.removeItem('ps_sheet'); } else throw e; }
+    }
+    const q = encodeURIComponent(`name='${INV_SHEET_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
+    const list = await invCall(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`);
+    if(list.files?.length){ inv.spreadsheetId=list.files[0].id; localStorage.setItem('ps_sheet',inv.spreadsheetId); return; }
+    await invEnsureFolder();
+    const s = await invCall('https://www.googleapis.com/drive/v3/files',{
+      method:'POST',
+      body:JSON.stringify({name:INV_SHEET_NAME,mimeType:'application/vnd.google-apps.spreadsheet',parents:[inv.folderId]})
+    });
+    inv.spreadsheetId=s.id; localStorage.setItem('ps_sheet',inv.spreadsheetId);
+    await invCall(
+      `https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/A1:F1?valueInputOption=RAW`,
+      { method:'PUT', body:JSON.stringify({values:[INV_HEADERS]}) }
+    );
+  }
+
+  async function invGetRows(){
+    const r = await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/A:F`);
+    return r.values || [INV_HEADERS];
+  }
+
+  function invNextId(rows){
+    let max=0;
+    for(let i=1; i<rows.length; i++){
+      const id=rows[i]?.[0]||'';
+      if(id.startsWith(INV_ID_PREFIX)){
+        const n=parseInt(id.slice(INV_ID_PREFIX.length),10);
+        if(!isNaN(n)&&n>max) max=n;
+      }
+    }
+    return INV_ID_PREFIX+String(max+1).padStart(INV_ID_WIDTH,'0');
+  }
+
+  // ---- UI helpers ----
+  function invSetUI(state){
+    $('#inv-unconfigured').style.display = state==='unconfigured' ? '':'none';
+    $('#inv-signedout').style.display    = state==='signedout'    ? '':'none';
+    $('#inv-signedin').style.display     = state==='signedin'     ? '':'none';
+  }
+
+  function invSetStatus(msg, kind){
+    const el=$('#inv-status');
+    el.textContent=msg;
+    el.className='inv-status'+(kind?' '+kind:'');
+  }
+
+  function renderInvSummary(total, cats){
+    const el=$('#inv-summary');
+    if(!total){ el.innerHTML='<p class="inv-notice" style="margin:0 0 18px">Your inventory is empty — save your first design below.</p>'; return; }
+    const chips=Object.entries(cats).map(([k,v])=>`<span class="inv-chip">${k} <b>${v}</b></span>`).join('');
+    el.innerHTML=`<div class="inv-bar"><span class="inv-total"><b>${total}</b> design${total!==1?'s':''} saved</span>${chips}</div>`;
+  }
+
+  function renderCategorySelect(cats){
+    const sel=$('#inv-cat');
+    sel.innerHTML='';
+    for(const c of cats){
+      const o=document.createElement('option'); o.value=c; o.textContent=c;
+      sel.appendChild(o);
+    }
+    const newOpt=document.createElement('option'); newOpt.value='__new__'; newOpt.textContent='+ Add new category…';
+    sel.appendChild(newOpt);
+    const hasCats=cats.length>0;
+    sel.style.display=hasCats?'':'none';
+    $('#inv-cat-new').style.display=hasCats?'none':'';
+  }
+
+  async function invLoad(){
+    await invEnsureSheet();
+    const rows=await invGetRows();
+    const data=rows.slice(1);
+    const cats={};
+    for(const r of data){ const c=r[1]||'(none)'; cats[c]=(cats[c]||0)+1; }
+    renderInvSummary(data.length, cats);
+    renderCategorySelect(Object.keys(cats));
+  }
+
+  function invShow(name){
+    $('#inv-panel').classList.add('show');
+    $('#inv-save').disabled=false;
+    invSetStatus('','');
+    $('#inv-title').value=name;
+    if(!invConfigured()){ invSetUI('unconfigured'); return; }
+    if(!inv.token){ invSetUI('signedout'); return; }
+    invSetUI('signedin');
+    invSetStatus('Refreshing…','');
+    invWithRetry(invLoad)
+      .then(()=>invSetStatus('',''))
+      .catch(e=>invSetStatus('Could not load inventory: '+e.message,'err'));
+  }
+
+  // ---- sign in / out ----
+  $('#inv-signin').addEventListener('click', async ()=>{
+    try{
+      await invRequestToken(false);
+      invSetUI('signedin');
+      invSetStatus('Loading inventory…','');
+      await invWithRetry(invLoad);
+      invSetStatus('','');
+    }catch(e){
+      invSetStatus('Sign-in failed: '+e.message,'err');
+    }
+  });
+
+  $('#inv-signout').addEventListener('click', ()=>{
+    if(inv.token && typeof google!=='undefined' && google.accounts)
+      google.accounts.oauth2.revoke(inv.token, ()=>{});
+    inv.token=null;
+    invSetUI('signedout');
+    invSetStatus('','');
+  });
+
+  // ---- category select ----
+  $('#inv-cat').addEventListener('change', function(){
+    const isNew=this.value==='__new__';
+    this.style.display=isNew?'none':'';
+    $('#inv-cat-new').style.display=isNew?'':'none';
+    if(isNew) $('#inv-cat-new').focus();
+  });
+
+  $('#inv-cat-new').addEventListener('blur', function(){
+    const cats=[...$('#inv-cat').options].filter(o=>o.value!=='__new__').map(o=>o.value);
+    if(!this.value.trim()&&cats.length){
+      this.style.display='none';
+      const sel=$('#inv-cat'); sel.style.display=''; sel.value=cats[0];
+    }
+  });
+
+  // ---- save ----
+  $('#inv-save').addEventListener('click', async ()=>{
+    const catSel=$('#inv-cat'), catNew=$('#inv-cat-new');
+    const cat=(catSel.style.display==='none'||catSel.value==='__new__')
+      ? catNew.value.trim() : catSel.value;
+    const title=$('#inv-title').value.trim();
+    const link=$('#inv-link').value.trim();
+    const notes=$('#inv-notes').value.trim();
+    if(!cat){ invSetStatus('Enter a category.','err'); return; }
+    if(!title){ invSetStatus('Enter a title.','err'); return; }
+    const btn=$('#inv-save'); btn.disabled=true;
+    invSetStatus('Saving…','');
+    let savedId;
+    try{
+      await invWithRetry(async ()=>{
+        await invEnsureSheet();
+        const rows=await invGetRows();
+        savedId=invNextId(rows);
+        await invCall(
+          `https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/A1:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+          { method:'POST', body:JSON.stringify({values:[[savedId,cat,title,new Date().toISOString(),link,notes]]}) }
+        );
+      });
+      invSetStatus('Saved as '+savedId,'ok');
+      try{ await invWithRetry(invLoad); }catch(_){} // refresh summary; non-critical
+    }catch(e){
+      invSetStatus('Save failed: '+e.message,'err');
+      btn.disabled=false;
+    }
+  });
 })();
