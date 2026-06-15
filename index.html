@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pattern Studio · Listing Kit Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Pattern studio</span>
+    <h1>Listing kit builder</h1>
+    <p class="lede">Drop a pattern in. Get the buyer's zip and three watermarked storefront proofs, named and ready for Etsy.</p>
+  </header>
+
+  <!-- ===== BENCH SETUP ===== -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="tag">Bench</span>
+      <h2>Set up once</h2>
+      <span class="hint">Reused for every listing this session</span>
+    </div>
+    <div class="panel-body">
+      <div class="grid2">
+        <div>
+          <span class="field-label">Watermark <span class="field-note">PNG, transparent</span></span>
+          <div class="drop" id="dz-wm">
+            <div class="dz-icon">[ PNG ]</div>
+            <div class="dz-main">Drop watermark</div>
+            <div class="dz-sub">or click to choose</div>
+            <input type="file" id="f-wm" accept="image/png">
+          </div>
+        </div>
+        <div>
+          <span class="field-label">License <span class="field-note">PDF, goes in every zip</span></span>
+          <div class="drop" id="dz-lic">
+            <div class="dz-icon">[ PDF ]</div>
+            <div class="dz-main">Drop license</div>
+            <div class="dz-sub">or click to choose</div>
+            <input type="file" id="f-lic" accept="application/pdf">
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:22px" class="grid2">
+        <label class="field" style="margin:0">
+          <span class="field-label">Watermark opacity</span>
+          <div class="slider-row">
+            <input type="range" id="wm-op" min="15" max="100" value="50">
+            <span class="slider-val" id="wm-op-v">50%</span>
+          </div>
+        </label>
+        <label class="field" style="margin:0">
+          <span class="field-label">Watermark density <span class="field-note">smaller = more tiles</span></span>
+          <div class="slider-row">
+            <input type="range" id="wm-sz" min="12" max="60" value="22">
+            <span class="slider-val" id="wm-sz-v">22%</span>
+          </div>
+        </label>
+      </div>
+
+      <div style="margin-top:22px">
+        <span class="field-label">Storefront format</span>
+        <div class="seg" id="seg-fmt">
+          <button class="on" data-fmt="jpg">JPG</button>
+          <button data-fmt="png">PNG</button>
+        </div>
+        <span class="field-note" style="margin-left:12px">JPG is smaller and best for storefront photos. The product files you sell are never touched.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== NEW LISTING ===== -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="tag">New</span>
+      <h2>New listing</h2>
+      <span class="hint">Upload both originals — they're copied in untouched</span>
+    </div>
+    <div class="panel-body">
+      <label class="field">
+        <span class="field-label">Pattern name<span class="req">*</span><span class="field-note">used for every filename</span></span>
+        <input type="text" id="f-name" placeholder="folk-floral-indigo" autocomplete="off">
+      </label>
+
+      <div class="grid2">
+        <div>
+          <span class="field-label">PNG original<span class="req">*</span></span>
+          <div class="drop" id="dz-png">
+            <div class="dz-icon">[ PNG ]</div>
+            <div class="dz-main">Drop PNG</div>
+            <div class="dz-sub">copied into the zip as-is</div>
+            <input type="file" id="f-png" accept="image/png">
+          </div>
+        </div>
+        <div>
+          <span class="field-label">JPEG original<span class="req">*</span></span>
+          <div class="drop" id="dz-jpg">
+            <div class="dz-icon">[ JPG ]</div>
+            <div class="dz-main">Drop JPEG</div>
+            <div class="dz-sub">copied into the zip as-is</div>
+            <input type="file" id="f-jpg" accept="image/jpeg">
+          </div>
+        </div>
+      </div>
+
+      <button class="build" id="build" style="margin-top:22px">
+        Build listing kit <span class="arrow">→</span>
+      </button>
+      <div class="msg" id="msg"></div>
+    </div>
+  </section>
+
+  <!-- ===== OUTPUT ===== -->
+  <section class="panel" id="output">
+    <div class="panel-head">
+      <span class="tag" style="background:var(--teal)">Kit</span>
+      <h2 id="out-title">Ready</h2>
+      <span class="hint">Download below — nothing is uploaded anywhere</span>
+    </div>
+    <div class="panel-body">
+      <div class="kit-files" id="kit-files"></div>
+      <div class="proofs" id="proofs"></div>
+      <div class="dl-row">
+        <a class="dl primary" id="dl-zip">
+          <span><span class="ic">⤓</span>&nbsp; Product zip<small id="dl-zip-name">name.zip</small></span>
+        </a>
+        <a class="dl" id="dl-store">
+          <span><span class="ic">⤓</span>&nbsp; All storefront proofs<small id="dl-store-name">name-storefront.zip</small></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <footer>Runs entirely in your browser · no internet, no uploads, no accounts</footer>
+</div>
+
+<canvas id="work"></canvas>
+
+<script src="jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
