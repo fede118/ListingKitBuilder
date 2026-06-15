@@ -316,11 +316,13 @@
   const INV_ID_PREFIX    = 'P';
   const INV_ID_WIDTH     = 6;
   const INV_HEADERS      = ['ID','Category','Title','Date Added','Source Link','Notes'];
+  const CAT_SHEET_NAME   = 'Categories';
 
   const inv = {
     token: null, tokenClient: null,
     spreadsheetId: localStorage.getItem('ps_sheet') || null,
     folderId:      localStorage.getItem('ps_folder') || null,
+    catSheetId: null,
     authResolve: null, authReject: null
   };
 
@@ -395,12 +397,12 @@
   }
   async function invEnsureSheet(){
     if(inv.spreadsheetId){
-      try{ await invCall(`https://www.googleapis.com/drive/v3/files/${inv.spreadsheetId}?fields=id`); return; }
+      try{ await invCall(`https://www.googleapis.com/drive/v3/files/${inv.spreadsheetId}?fields=id`); return await invEnsureCatSheet(); }
       catch(e){ if(e.status!==401){ inv.spreadsheetId=null; localStorage.removeItem('ps_sheet'); } else throw e; }
     }
     const q=encodeURIComponent(`name='${INV_SHEET_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
     const list=await invCall(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`);
-    if(list.files?.length){ inv.spreadsheetId=list.files[0].id; localStorage.setItem('ps_sheet',inv.spreadsheetId); return; }
+    if(list.files?.length){ inv.spreadsheetId=list.files[0].id; localStorage.setItem('ps_sheet',inv.spreadsheetId); return await invEnsureCatSheet(); }
     await invEnsureFolder();
     const s=await invCall('https://www.googleapis.com/drive/v3/files',{
       method:'POST',
@@ -411,6 +413,7 @@
       `https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/A1:F1?valueInputOption=RAW`,
       {method:'PUT',body:JSON.stringify({values:[INV_HEADERS]})}
     );
+    await invEnsureCatSheet();
   }
   async function invGetRows(){
     const r=await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/A:F`);
@@ -426,6 +429,62 @@
       }
     }
     return INV_ID_PREFIX+String(max+1).padStart(INV_ID_WIDTH,'0');
+  }
+
+  // ---- Categories tab provisioning ----
+  async function invEnsureCatSheet(){
+    if(inv.catSheetId !== null) return;
+    const meta=await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}?fields=sheets.properties`);
+    const existing=meta.sheets?.find(s=>s.properties.title===CAT_SHEET_NAME);
+    if(existing){ inv.catSheetId=existing.properties.sheetId; return; }
+    const result=await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}:batchUpdate`,{
+      method:'POST',
+      body:JSON.stringify({requests:[{addSheet:{properties:{title:CAT_SHEET_NAME}}}]})
+    });
+    inv.catSheetId=result.replies[0].addSheet.properties.sheetId;
+    await invCall(
+      `https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/${CAT_SHEET_NAME}!A1?valueInputOption=RAW`,
+      {method:'PUT',body:JSON.stringify({values:[['Category']]})}
+    );
+  }
+
+  // ---- category CRUD ----
+  async function invGetCategories(){
+    const r=await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/${CAT_SHEET_NAME}!A2:A`);
+    return (r.values||[]).map(row=>row[0]).filter(Boolean);
+  }
+  async function invAddCategory(name){
+    await invCall(
+      `https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/${CAT_SHEET_NAME}!A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      {method:'POST',body:JSON.stringify({values:[[name]]})}
+    );
+  }
+  async function invDeleteCategory(name){
+    const r=await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/${CAT_SHEET_NAME}!A:A`);
+    const vals=r.values||[];
+    const rowIdx=vals.findIndex((row,i)=>i>0&&row[0]===name);
+    if(rowIdx<0) return;
+    await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}:batchUpdate`,{
+      method:'POST',
+      body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:inv.catSheetId,dimension:'ROWS',startIndex:rowIdx,endIndex:rowIdx+1}}}]})
+    });
+  }
+  async function invRenameCategory(oldName, newName){
+    const [catR,invR]=await Promise.all([
+      invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/${CAT_SHEET_NAME}!A:A`),
+      invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values/B:B`)
+    ]);
+    const data=[];
+    const catVals=catR.values||[];
+    const catRowIdx=catVals.findIndex((row,i)=>i>0&&row[0]===oldName);
+    if(catRowIdx>=0) data.push({range:`${CAT_SHEET_NAME}!A${catRowIdx+1}`,values:[[newName]]});
+    const invVals=invR.values||[];
+    invVals.forEach((row,i)=>{ if(i>0&&row[0]===oldName) data.push({range:`B${i+1}`,values:[[newName]]}); });
+    if(!data.length) return;
+    await invCall(`https://sheets.googleapis.com/v4/spreadsheets/${inv.spreadsheetId}/values:batchUpdate`,{
+      method:'POST',
+      body:JSON.stringify({valueInputOption:'RAW',data})
+    });
   }
 
   // ---- UI state ----
@@ -483,28 +542,118 @@
       '</tbody></table>';
   }
 
+  function invCatSetStatus(msg,kind){
+    const el=$('#inv-cat-status'); el.textContent=msg;
+    el.className='inv-status'+(kind?' '+kind:'');
+  }
+  function renderCatManager(cats){
+    const list=$('#inv-cat-list');
+    if(!cats.length){
+      list.innerHTML='<p class="inv-notice" style="font-size:13px;margin-bottom:0">No categories yet — add one below.</p>';
+      return;
+    }
+    const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    list.innerHTML=cats.map(c=>`
+      <div class="inv-cat-item" data-cat="${esc(c)}">
+        <span class="inv-cat-name">${esc(c)}</span>
+        <input type="text" class="inv-cat-edit-input inv-cat-input" value="${esc(c)}" style="display:none" aria-label="Rename category">
+        <div class="inv-cat-item-actions">
+          <button class="inv-cat-rename-btn inv-cat-btn inv-cat-btn--ghost">Rename</button>
+          <button class="inv-cat-confirm-btn inv-cat-btn" style="display:none">Save</button>
+          <button class="inv-cat-cancel-btn inv-cat-btn inv-cat-btn--ghost" style="display:none">Cancel</button>
+          <button class="inv-cat-delete-btn inv-cat-btn inv-cat-btn--danger" title="Delete category">✕</button>
+        </div>
+      </div>`).join('');
+
+    list.querySelectorAll('.inv-cat-item').forEach(item=>{
+      const nameEl=item.querySelector('.inv-cat-name');
+      const editInput=item.querySelector('.inv-cat-edit-input');
+      const renameBtn=item.querySelector('.inv-cat-rename-btn');
+      const confirmBtn=item.querySelector('.inv-cat-confirm-btn');
+      const cancelBtn=item.querySelector('.inv-cat-cancel-btn');
+      const deleteBtn=item.querySelector('.inv-cat-delete-btn');
+
+      function startEdit(){
+        nameEl.style.display='none'; renameBtn.style.display='none'; deleteBtn.style.display='none';
+        editInput.style.display=''; confirmBtn.style.display=''; cancelBtn.style.display='';
+        editInput.focus(); editInput.select();
+      }
+      function cancelEdit(){
+        editInput.value=item.dataset.cat;
+        nameEl.style.display=''; renameBtn.style.display=''; deleteBtn.style.display='';
+        editInput.style.display='none'; confirmBtn.style.display='none'; cancelBtn.style.display='none';
+      }
+
+      renameBtn.addEventListener('click', startEdit);
+      cancelBtn.addEventListener('click', cancelEdit);
+      editInput.addEventListener('keydown', e=>{ if(e.key==='Enter') confirmBtn.click(); if(e.key==='Escape') cancelEdit(); });
+
+      confirmBtn.addEventListener('click', async ()=>{
+        const newName=editInput.value.trim();
+        if(!newName||newName===item.dataset.cat){ cancelEdit(); return; }
+        const oldName=item.dataset.cat;
+        invCatSetStatus('Renaming…','');
+        confirmBtn.disabled=true; cancelBtn.disabled=true;
+        try{
+          await invWithRetry(()=>invRenameCategory(oldName,newName));
+          invCatSetStatus('Renamed.','ok');
+          const [updatedCats,rows]=await Promise.all([invWithRetry(invGetCategories),invWithRetry(invGetRows)]);
+          renderCatManager(updatedCats);
+          renderCategorySelect(updatedCats);
+          renderInventoryTable(rows);
+        }catch(e){
+          invCatSetStatus('Rename failed: '+e.message,'err');
+          confirmBtn.disabled=false; cancelBtn.disabled=false;
+        }
+      });
+
+      deleteBtn.addEventListener('click', async ()=>{
+        if(!confirm(`Delete "${item.dataset.cat}" from your category list?\n\nInventory items using this name will keep it — only the list entry is removed.`)) return;
+        invCatSetStatus('Deleting…','');
+        deleteBtn.disabled=true;
+        try{
+          await invWithRetry(()=>invDeleteCategory(item.dataset.cat));
+          invCatSetStatus('Deleted.','ok');
+          const updatedCats=await invWithRetry(invGetCategories);
+          renderCatManager(updatedCats);
+          renderCategorySelect(updatedCats);
+        }catch(e){
+          invCatSetStatus('Delete failed: '+e.message,'err');
+          deleteBtn.disabled=false;
+        }
+      });
+    });
+  }
+
   // ---- data loaders ----
+  async function invLoadCatManager(){
+    await invEnsureCatSheet();
+    const cats=await invGetCategories();
+    renderCatManager(cats);
+    renderCategorySelect(cats);
+  }
   async function invLoad(){   // builder: refreshes category select + summary
     await invEnsureSheet();
-    const rows=await invGetRows();
+    const [cats,rows]=await Promise.all([invGetCategories(),invGetRows()]);
     const data=rows.slice(1);
-    const cats={};
-    for(const r of data){ const c=r[1]||'(none)'; cats[c]=(cats[c]||0)+1; }
-    renderInvSummary(data.length, cats);
-    renderCategorySelect(Object.keys(cats));
+    const catCounts={};
+    for(const r of data){ const c=r[1]||'(none)'; catCounts[c]=(catCounts[c]||0)+1; }
+    renderInvSummary(data.length, catCounts);
+    renderCategorySelect(cats);
   }
-  async function invLoadPage(){   // inventory view: summary + full table
+  async function invLoadPage(){   // inventory view: summary + category manager + full table
     const wrap=$('#inv-table-wrap');
     wrap.innerHTML='<p class="inv-notice" style="margin-top:16px">Loading…</p>';
     try{
       await invWithRetry(async ()=>{
         await invEnsureSheet();
-        const rows=await invGetRows();
+        const [cats,rows]=await Promise.all([invGetCategories(),invGetRows()]);
         const data=rows.slice(1);
-        const cats={};
-        for(const r of data){ const c=r[1]||'(none)'; cats[c]=(cats[c]||0)+1; }
-        renderInvSummary(data.length, cats);
-        renderCategorySelect(Object.keys(cats));
+        const catCounts={};
+        for(const r of data){ const c=r[1]||'(none)'; catCounts[c]=(catCounts[c]||0)+1; }
+        renderInvSummary(data.length, catCounts);
+        renderCatManager(cats);
+        renderCategorySelect(cats);
         renderInventoryTable(rows);
       });
     }catch(e){
@@ -544,14 +693,36 @@
     if(inv.token && typeof google!=='undefined' && google.accounts)
       google.accounts.oauth2.revoke(inv.token,()=>{});
     inv.token=null;
+    inv.catSheetId=null;
     invSetUI('signedout');
     invSetPageUI('signedout');
     invSetStatus('','');
     $('#inv-summary').innerHTML='';
+    $('#inv-cat-list').innerHTML='';
     $('#inv-table-wrap').innerHTML='';
   }
 
   // ---- event listeners ----
+  $('#inv-cat-add-btn').addEventListener('click', async ()=>{
+    const input=$('#inv-cat-add-input');
+    const name=input.value.trim();
+    if(!name) return;
+    invCatSetStatus('Adding…','');
+    try{
+      const existing=await invWithRetry(invGetCategories);
+      if(existing.includes(name)){ invCatSetStatus('Already exists.','err'); return; }
+      await invWithRetry(()=>invAddCategory(name));
+      input.value='';
+      invCatSetStatus('Added.','ok');
+      const updated=await invWithRetry(invGetCategories);
+      renderCatManager(updated);
+      renderCategorySelect(updated);
+    }catch(e){
+      invCatSetStatus('Add failed: '+e.message,'err');
+    }
+  });
+  $('#inv-cat-add-input').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#inv-cat-add-btn').click(); });
+
   $('#inv-signin').addEventListener('click', invSignIn);
   $('#inv-page-signin').addEventListener('click', invSignIn);
   $('#inv-signout').addEventListener('click', invSignOut);
@@ -573,8 +744,8 @@
 
   $('#inv-save').addEventListener('click', async ()=>{
     const catSel=$('#inv-cat'), catNew=$('#inv-cat-new');
-    const cat=(catSel.style.display==='none'||catSel.value==='__new__')
-      ? catNew.value.trim() : catSel.value;
+    const isNewCat=catSel.style.display==='none'||catSel.value==='__new__';
+    const cat=isNewCat ? catNew.value.trim() : catSel.value;
     const title=$('#inv-title').value.trim();
     const link=$('#inv-link').value.trim();
     const notes=$('#inv-notes').value.trim();
@@ -586,6 +757,7 @@
     try{
       await invWithRetry(async ()=>{
         await invEnsureSheet();
+        if(isNewCat){ const eCats=await invGetCategories(); if(!eCats.includes(cat)) await invAddCategory(cat); }
         const rows=await invGetRows();
         savedId=invNextId(rows);
         await invCall(
