@@ -462,7 +462,7 @@
       scope: 'https://www.googleapis.com/auth/drive.file',
       callback: resp => {
         if(resp.error){ if(inv.authReject) inv.authReject(new Error(resp.error)); }
-        else           { inv.token = resp.access_token; if(inv.authResolve) inv.authResolve(); }
+        else           { inv.token = resp.access_token; invCacheToken(resp.access_token, +resp.expires_in||3600); if(inv.authResolve) inv.authResolve(); }
         inv.authResolve = inv.authReject = null;
       }
     });
@@ -474,6 +474,22 @@
       inv.authResolve = res; inv.authReject = rej;
       inv.tokenClient.requestAccessToken({ prompt: silent ? '' : undefined });
     });
+  }
+  // ---- access-token cache (sessionStorage) ----
+  // Access tokens live ~1h. Caching the token + its expiry lets a page refresh
+  // reuse a still-valid token directly, with no round-trip to Google (no flash).
+  // sessionStorage is per-tab and cleared on close; the cross-session case is
+  // handled by the silent restore in invTrySilentRestore.
+  function invCacheToken(token, expiresInSec){
+    try{ sessionStorage.setItem('ps_token', JSON.stringify({ t: token, exp: Date.now() + expiresInSec*1000 })); }catch(_){}
+  }
+  function invLoadCachedToken(){
+    try{
+      const { t, exp } = JSON.parse(sessionStorage.getItem('ps_token')||'null') || {};
+      if(t && exp && Date.now() < exp - 60000) return t;  // 60s safety margin
+    }catch(_){}
+    try{ sessionStorage.removeItem('ps_token'); }catch(_){}
+    return null;
   }
 
   // ---- API helpers ----
@@ -786,6 +802,7 @@
     const onInvPage = location.hash==='#inventory';
     try{
       await invRequestToken(false);
+      localStorage.setItem('ps_signed_in','1');
       invSetUI('signedin');
       invSetPageUI('signedin');
       if(onInvPage){
@@ -812,6 +829,8 @@
     else if(inv.spreadsheetId) invWithRetry(invLoad).catch(()=>{});
   }
   function invSignOut(){
+    localStorage.removeItem('ps_signed_in');
+    try{ sessionStorage.removeItem('ps_token'); }catch(_){}
     if(inv.token && typeof google!=='undefined' && google.accounts)
       google.accounts.oauth2.revoke(inv.token,()=>{});
     inv.token=null;
@@ -895,6 +914,42 @@
     }
   });
 
+  // ---- silent restore on page load ----
+  function invMarkSignedIn(){
+    invSetUI('signedin');
+    invSetPageUI('signedin');
+    if(location.hash==='#inventory') invLoadPage().catch(()=>{});
+    else if(inv.spreadsheetId) invWithRetry(invLoad).catch(()=>{});
+  }
+  function invTrySilentRestore(){
+    if(!invConfigured() || !localStorage.getItem('ps_signed_in')) return;
+    // Fast path: a still-valid cached token restores the session with no call
+    // to Google at all — no popup, no flash.
+    const cached = invLoadCachedToken();
+    if(cached){ inv.token = cached; invMarkSignedIn(); return; }
+    // Slow path: token expired/missing. Poll until GIS is ready (async script),
+    // then silently request a fresh token. Falls back to signed-out on failure.
+    let attempts = 0;
+    const maxAttempts = 30; // 3 seconds at 100ms intervals
+    const poll = setInterval(()=>{
+      attempts++;
+      if(typeof google !== 'undefined' && google.accounts){
+        clearInterval(poll);
+        invInitClient();
+        invRequestToken(true).then(()=>{
+          localStorage.setItem('ps_signed_in','1');
+          invMarkSignedIn();
+        }).catch(()=>{
+          // Silent restore failed (session expired, consent revoked, etc.) —
+          // clear the flag so we don't retry on next load until user signs in again.
+          localStorage.removeItem('ps_signed_in');
+        });
+      } else if(attempts >= maxAttempts){
+        clearInterval(poll);
+      }
+    }, 100);
+  }
+
   // ---- init ----
   (function invInit(){
     if(!invConfigured()){
@@ -908,5 +963,6 @@
       document.querySelectorAll('.dz-drive').forEach(b=>b.style.display='none');
     }
     applyView();
+    invTrySilentRestore();
   })();
 })();
