@@ -451,8 +451,11 @@
   // GOOGLE DRIVE PICKER  (the "From Drive" buttons on every drop zone)
   // =====================================================================
   // Lets you pull originals straight out of Drive instead of dropping them.
-  // Reuses the same OAuth sign-in and the narrow drive.file scope: a file the
-  // user explicitly picks here is granted to the app, nothing else is exposed.
+  // Reuses the same OAuth sign-in with the drive.readonly scope, which lets the
+  // Picker render real image thumbnails (drive.file can't read files until after
+  // they're picked, so previews come up blank). Note: drive.readonly is a Google
+  // "restricted" scope — fine while the app is in Testing, but publishing to all
+  // users requires OAuth verification + a CASA security assessment.
   //
   // One-time setup, in addition to the OAuth Client ID above:
   //   1. Same Google Cloud project → enable the "Google Picker API".
@@ -542,7 +545,7 @@
     if(inv.tokenClient || typeof google==='undefined' || !google.accounts) return;
     inv.tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.file',
+      scope: 'https://www.googleapis.com/auth/drive.readonly',
       callback: resp => {
         if(resp.error){ if(inv.authReject) inv.authReject(new Error(resp.error)); }
         else           { inv.token = resp.access_token; invCacheToken(resp.access_token, +resp.expires_in||3600); if(inv.authResolve) inv.authResolve(); }
