@@ -407,6 +407,7 @@
       try{
         const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
           .setMimeTypes((mimeTypes||[]).join(','))
+          .setIncludeFolders(true)
           .setSelectFolderEnabled(false)
           .setMode(google.picker.DocsViewMode.GRID);
         const picker = new google.picker.PickerBuilder()
