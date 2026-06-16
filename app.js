@@ -116,8 +116,53 @@
     return canvasToBlob(canvas);
   }
 
+  // ---- bench persistence (IndexedDB) ----
+  // The watermark and license are reused for every listing, so we stash their
+  // bytes locally and rehydrate them on load — works for both Drive picks and
+  // local drops, with no sign-in or re-download. Storage is best-effort: any
+  // failure leaves the in-memory file intact, it just won't survive a refresh.
+  const IDB_NAME='ps_bench', IDB_STORE='files';
+  function idbOpen(){
+    return new Promise((res,rej)=>{
+      const req=indexedDB.open(IDB_NAME,1);
+      req.onupgradeneeded=()=>req.result.createObjectStore(IDB_STORE);
+      req.onsuccess=()=>res(req.result);
+      req.onerror=()=>rej(req.error);
+    });
+  }
+  async function idbPut(key,blob){
+    try{
+      const db=await idbOpen();
+      await new Promise((res,rej)=>{
+        const tx=db.transaction(IDB_STORE,'readwrite');
+        tx.objectStore(IDB_STORE).put(blob,key);
+        tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+      });
+    }catch(_){ /* best-effort */ }
+  }
+  async function idbGet(key){
+    try{
+      const db=await idbOpen();
+      return await new Promise((res,rej)=>{
+        const tx=db.transaction(IDB_STORE,'readonly');
+        const r=tx.objectStore(IDB_STORE).get(key);
+        r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error);
+      });
+    }catch(_){ return null; }
+  }
+  async function idbDel(key){
+    try{
+      const db=await idbOpen();
+      await new Promise((res,rej)=>{
+        const tx=db.transaction(IDB_STORE,'readwrite');
+        tx.objectStore(IDB_STORE).delete(key);
+        tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+      });
+    }catch(_){ /* best-effort */ }
+  }
+
   // ---- file binding for a drop zone ----
-  function bindZone(zoneSel, inputSel, accept, onLoad, driveMimes){
+  function bindZone(zoneSel, inputSel, accept, onLoad, driveMimes, onClear){
     const zone=$(zoneSel), input=$(inputSel);
     const set = async file => {
       if(!file) return;
@@ -165,6 +210,16 @@
         }
       });
     }
+
+    // "×" clear button — drops the file and its persisted copy. Shown only
+    // while the zone is loaded (CSS keys off .drop.loaded).
+    const clearBtn = zone.querySelector('.dz-clear');
+    if(clearBtn && onClear){
+      clearBtn.addEventListener('click', e=>{
+        e.stopPropagation();   // don't also trigger the zone's file dialog
+        onClear(zone);
+      });
+    }
   }
   function markSub(zone, text){
     const sub=zone.querySelector('.dz-sub'); if(sub) sub.textContent=text;
@@ -178,18 +233,45 @@
     zone.querySelector('.dz-main').textContent=mainText;
     zone.querySelector('.dz-sub').textContent=subText;
   }
+  function markCleared(zone,mainText){
+    zone.classList.remove('loaded');
+    zone.querySelector('.dz-main').textContent=mainText;
+    zone.querySelector('.dz-sub').textContent='or click to choose';
+    const input=zone.querySelector('input[type=file]'); if(input) input.value='';
+  }
 
-  // watermark
-  bindZone('#dz-wm','#f-wm', f=>f.type==='image/png', async (f,z)=>{
+  // watermark — persisted across refreshes (see idb* helpers). `persist` is
+  // false when rehydrating from storage on load, so we don't write it back.
+  async function loadWatermark(f,z,persist=true){
     state.wmFile=f;
     try{ state.wmBitmap = await createImageBitmap(f); }catch(_){ state.wmBitmap=null; }
     markLoaded(z,'Watermark set', f.name+' · '+humanSize(f.size));
-  }, ['image/png']);
-  // license
-  bindZone('#dz-lic','#f-lic', f=>f.type==='application/pdf', (f,z)=>{
+    if(persist) idbPut('wm',f);
+  }
+  function clearWatermark(z){
+    state.wmFile=null; state.wmBitmap=null;
+    markCleared(z,'Drop watermark');
+    idbDel('wm');
+  }
+  bindZone('#dz-wm','#f-wm', f=>f.type==='image/png', (f,z)=>loadWatermark(f,z), ['image/png'], clearWatermark);
+  // license — persisted the same way
+  function loadLicense(f,z,persist=true){
     state.licFile=f;
     markLoaded(z,'License set', f.name+' · '+humanSize(f.size));
-  }, ['application/pdf']);
+    if(persist) idbPut('lic',f);
+  }
+  function clearLicense(z){
+    state.licFile=null;
+    markCleared(z,'Drop license');
+    idbDel('lic');
+  }
+  bindZone('#dz-lic','#f-lic', f=>f.type==='application/pdf', (f,z)=>loadLicense(f,z), ['application/pdf'], clearLicense);
+  // rehydrate the bench from storage (fire-and-forget; no-op if nothing saved)
+  (async ()=>{
+    const [wm,lic]=await Promise.all([idbGet('wm'),idbGet('lic')]);
+    if(wm)  loadWatermark(wm, $('#dz-wm'), false);
+    if(lic) loadLicense(lic, $('#dz-lic'), false);
+  })();
   // png original
   bindZone('#dz-png','#f-png', f=>f.type==='image/png', (f,z)=>{
     state.pngFile=f; markLoaded(z,'PNG loaded', f.name+' · '+humanSize(f.size));

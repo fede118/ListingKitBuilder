@@ -124,6 +124,17 @@ input[type=text]:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px
 }
 .dz-drive:hover{border-color:var(--teal);color:var(--teal);background:var(--surface-2)}
 .dz-drive:disabled{opacity:.5;cursor:default}
+.dz-clear{
+  position:absolute;top:6px;right:6px;
+  width:20px;height:20px;padding:0;line-height:1;
+  display:none;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:3px;
+  background:var(--surface);color:var(--ink-soft);
+  font-size:15px;cursor:pointer;
+  transition:border-color .15s,color .15s,background .15s;
+}
+.drop.loaded .dz-clear{display:flex}
+.dz-clear:hover{border-color:var(--danger);color:var(--danger);background:var(--surface-2)}
 
 /* ---- sliders ---- */
 .slider-row{display:flex;align-items:center;gap:14px}
