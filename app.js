@@ -117,12 +117,22 @@
   }
 
   // ---- file binding for a drop zone ----
-  function bindZone(zoneSel, inputSel, accept, onLoad){
+  function bindZone(zoneSel, inputSel, accept, onLoad, driveMimes){
     const zone=$(zoneSel), input=$(inputSel);
-    const set = file => {
+    const set = async file => {
       if(!file) return;
       if(accept && !accept(file)){ flash(zone); return; }
-      onLoad(file, zone);
+      // Snapshot the bytes into memory now, while the file is definitely
+      // readable. A native-picker/drop File is just a handle to the file on
+      // disk — if that file is moved or re-exported before the next build,
+      // reading it (e.g. JSZip on a reused license) throws NotFoundError.
+      // An in-memory copy is immune to that.
+      let stable = file;
+      try{
+        const buf = await file.arrayBuffer();
+        stable = new File([buf], file.name, { type:file.type });
+      }catch(_){ /* keep the original File if the snapshot fails */ }
+      onLoad(stable, zone);
     };
     zone.addEventListener('click',()=>input.click());
     input.addEventListener('change',e=>set(e.target.files[0]));
@@ -132,6 +142,32 @@
       e.preventDefault();zone.classList.remove('over');
       set(e.dataTransfer.files[0]);
     });
+
+    // "From Drive" button — opens the Google Picker, downloads the chosen file.
+    // Visibility is decided in init (after the Google config consts are defined).
+    const driveBtn = zone.querySelector('.dz-drive');
+    if(driveBtn){
+      driveBtn.addEventListener('click', async e=>{
+        e.stopPropagation();   // don't also trigger the zone's file dialog
+        const label = driveBtn.textContent;
+        driveBtn.disabled=true; driveBtn.textContent='Opening…';
+        try{
+          const doc = await openDrivePicker(driveMimes);
+          if(doc){
+            driveBtn.textContent='Downloading…';
+            set(await driveDownload(doc));
+          }
+        }catch(err){
+          flash(zone);
+          markSub(zone, 'Drive: '+(err.message||err));
+        }finally{
+          driveBtn.disabled=false; driveBtn.textContent=label;
+        }
+      });
+    }
+  }
+  function markSub(zone, text){
+    const sub=zone.querySelector('.dz-sub'); if(sub) sub.textContent=text;
   }
   function flash(zone){
     zone.classList.add('over');
@@ -148,20 +184,20 @@
     state.wmFile=f;
     try{ state.wmBitmap = await createImageBitmap(f); }catch(_){ state.wmBitmap=null; }
     markLoaded(z,'Watermark set', f.name+' · '+humanSize(f.size));
-  });
+  }, ['image/png']);
   // license
   bindZone('#dz-lic','#f-lic', f=>f.type==='application/pdf', (f,z)=>{
     state.licFile=f;
     markLoaded(z,'License set', f.name+' · '+humanSize(f.size));
-  });
+  }, ['application/pdf']);
   // png original
   bindZone('#dz-png','#f-png', f=>f.type==='image/png', (f,z)=>{
     state.pngFile=f; markLoaded(z,'PNG loaded', f.name+' · '+humanSize(f.size));
-  });
+  }, ['image/png']);
   // jpeg original
   bindZone('#dz-jpg','#f-jpg', f=>f.type==='image/jpeg', (f,z)=>{
     state.jpgFile=f; markLoaded(z,'JPEG loaded', f.name+' · '+humanSize(f.size));
-  });
+  }, ['image/jpeg']);
 
   // sliders
   $('#wm-op').addEventListener('input',e=>$('#wm-op-v').textContent=e.target.value+'%');
@@ -227,7 +263,7 @@
       const zip = new JSZip();
       if(state.pngFile) zip.file(name+'.png', state.pngFile);
       if(state.jpgFile) zip.file(name+'.jpg', state.jpgFile);
-      if(state.licFile) zip.file('LICENSE.pdf', state.licFile);
+      if(state.licFile) zip.file(state.licFile.name, state.licFile);   // keep the license's original filename
       const productZip = await zip.generateAsync({type:'blob'});
 
       // storefront zip
@@ -274,8 +310,8 @@
     if(state.pngFile) lines.push(`   └ ${name}.png  <span style="opacity:.6">(${humanSize(state.pngFile.size)}, untouched)</span>`);
     if(state.jpgFile) lines.push(`   └ ${name}.jpg  <span style="opacity:.6">(${humanSize(state.jpgFile.size)}, untouched)</span>`);
     lines.push(noLic
-      ? `   └ <span style="color:var(--danger)">LICENSE.pdf — not set</span>`
-      : `   └ <span class="lic">LICENSE.pdf</span>`);
+      ? `   └ <span style="color:var(--danger)">license — not set</span>`
+      : `   └ <span class="lic">${state.licFile.name}</span>`);
     lines.push('');
     lines.push(`<b>storefront proofs</b>  ·  ${humanSize(productZip.size+storeZip.size)} total kit`);
     lines.push(`   └ ${name}-watermark-1.${m.ext}  <span style="opacity:.6">(named)</span>`);
@@ -328,6 +364,80 @@
 
   const invConfigured = () =>
     GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID';
+
+  // =====================================================================
+  // GOOGLE DRIVE PICKER  (the "From Drive" buttons on every drop zone)
+  // =====================================================================
+  // Lets you pull originals straight out of Drive instead of dropping them.
+  // Reuses the same OAuth sign-in and the narrow drive.file scope: a file the
+  // user explicitly picks here is granted to the app, nothing else is exposed.
+  //
+  // One-time setup, in addition to the OAuth Client ID above:
+  //   1. Same Google Cloud project → enable the "Google Picker API".
+  //   2. Credentials → Create → API key. Restrict it to the Picker API and to
+  //      your site's origin (HTTP referrers), then paste it below.
+  // Leave GOOGLE_API_KEY blank and the Drive buttons simply hide themselves.
+  // =====================================================================
+  const GOOGLE_API_KEY = 'AIzaSyDN9zZ_EnYP6TXynv9nYjwjSqOAlfq_FhA';   // developer key for the Picker — see notes above
+  const GOOGLE_APP_ID  = (GOOGLE_CLIENT_ID.split('-')[0]) || '';  // project number
+
+  const driveConfigured = () => invConfigured() && !!GOOGLE_API_KEY;
+
+  let pickerApiLoaded = false;
+  function loadPickerApi(){
+    return new Promise((res,rej)=>{
+      if(pickerApiLoaded){ res(); return; }
+      if(typeof gapi==='undefined'){ rej(new Error('Google API not loaded yet — try again in a moment.')); return; }
+      gapi.load('picker', {
+        callback: ()=>{ pickerApiLoaded=true; res(); },
+        onerror:  ()=>rej(new Error('Picker failed to load.'))
+      });
+    });
+  }
+
+  // open the Picker filtered to the given mime types; resolves to the chosen
+  // doc ({id,name,mimeType,...}) or null if the user cancelled
+  async function openDrivePicker(mimeTypes){
+    if(!inv.token){
+      await invRequestToken(false);
+      invReflectSignedIn();   // keep the inventory panels in sync with this sign-in
+    }
+    await loadPickerApi();
+    return new Promise((resolve, reject)=>{
+      try{
+        const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+          .setMimeTypes((mimeTypes||[]).join(','))
+          .setSelectFolderEnabled(false)
+          .setMode(google.picker.DocsViewMode.GRID);
+        const picker = new google.picker.PickerBuilder()
+          .setAppId(GOOGLE_APP_ID)
+          .setOAuthToken(inv.token)
+          .setDeveloperKey(GOOGLE_API_KEY)
+          .addView(view)
+          .setCallback(data=>{
+            if(data.action===google.picker.Action.PICKED) resolve(data.docs && data.docs[0]);
+            else if(data.action===google.picker.Action.CANCEL) resolve(null);
+          })
+          .build();
+        // The picker appends its iframe to <body> and grabs focus, which nudges
+        // the page to scroll. Pin the scroll position so the page stays put.
+        const sx=window.scrollX, sy=window.scrollY;
+        const pin=()=>window.scrollTo(sx,sy);
+        picker.setVisible(true);
+        [0,50,150,300].forEach(t=>setTimeout(pin,t));
+      }catch(e){ reject(e); }
+    });
+  }
+
+  // download a picked Drive file's bytes and wrap them in a File
+  async function driveDownload(doc){
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`,
+      { headers:{ 'Authorization':'Bearer '+inv.token } });
+    if(r.status===401){ await invRequestToken(true); return driveDownload(doc); }
+    if(!r.ok) throw new Error('download failed ('+r.status+')');
+    const blob = await r.blob();
+    return new File([blob], doc.name || 'drive-file', { type: doc.mimeType || blob.type });
+  }
 
   // ---- view routing ----
   function applyView(){
@@ -689,6 +799,18 @@
       invSetStatus('Sign-in failed: '+e.message,'err');
     }
   }
+  // A sign-in obtained elsewhere (e.g. the Drive picker) — surface it across
+  // both panels so the user isn't asked to sign in again for inventory. Does
+  // NOT force-provision the sheet: a Drive-only user shouldn't get an inventory
+  // spreadsheet created as a side effect. The sheet is still made lazily when
+  // they actually open Inventory or save a design.
+  function invReflectSignedIn(){
+    if(!inv.token) return;
+    invSetUI('signedin');
+    invSetPageUI('signedin');
+    if(location.hash==='#inventory') invLoadPage().catch(()=>{});
+    else if(inv.spreadsheetId) invWithRetry(invLoad).catch(()=>{});
+  }
   function invSignOut(){
     if(inv.token && typeof google!=='undefined' && google.accounts)
       google.accounts.oauth2.revoke(inv.token,()=>{});
@@ -781,6 +903,9 @@
     } else {
       invSetUI('signedout');
       invSetPageUI('signedout');
+    }
+    if(!driveConfigured()){
+      document.querySelectorAll('.dz-drive').forEach(b=>b.style.display='none');
     }
     applyView();
   })();

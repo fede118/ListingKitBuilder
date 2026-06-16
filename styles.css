@@ -114,6 +114,16 @@ input[type=text]:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px
 .drop .dz-sub{font-family:var(--mono);font-size:11px;color:var(--ink-soft);word-break:break-all;max-width:100%}
 .drop.loaded .dz-main{color:var(--teal)}
 .drop input[type=file]{display:none}
+.dz-drive{
+  margin-top:4px;
+  font-family:var(--mono);font-size:11px;letter-spacing:.04em;
+  border:1px solid var(--line);border-radius:3px;
+  background:var(--surface);color:var(--ink-soft);
+  padding:5px 11px;cursor:pointer;
+  transition:border-color .15s,color .15s,background .15s;
+}
+.dz-drive:hover{border-color:var(--teal);color:var(--teal);background:var(--surface-2)}
+.dz-drive:disabled{opacity:.5;cursor:default}
 
 /* ---- sliders ---- */
 .slider-row{display:flex;align-items:center;gap:14px}
