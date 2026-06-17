@@ -159,7 +159,7 @@
     <div class="panel-body">
 
       <div id="inv-unconfigured" style="display:none">
-        <p class="inv-notice">Inventory not configured — paste your Google Cloud Client ID into <code>GOOGLE_CLIENT_ID</code> in <code>app.js</code> to enable this feature.</p>
+        <p class="inv-notice">Inventory not configured — paste your Google Cloud Client ID into <code>GOOGLE_CLIENT_ID</code> in <code>js/google-config.js</code> to enable this feature.</p>
       </div>
 
       <div id="inv-signedout">
@@ -223,7 +223,7 @@
       <div class="panel-body">
 
         <div id="inv-page-unconfigured" style="display:none">
-          <p class="inv-notice">Inventory not configured — paste your Google Cloud Client ID into <code>GOOGLE_CLIENT_ID</code> in <code>app.js</code> to enable this feature.</p>
+          <p class="inv-notice">Inventory not configured — paste your Google Cloud Client ID into <code>GOOGLE_CLIENT_ID</code> in <code>js/google-config.js</code> to enable this feature.</p>
         </div>
 
         <div id="inv-page-signedout">
@@ -267,6 +267,6 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js" async defer></script>
 <script src="jszip.min.js"></script>
-<script src="app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
