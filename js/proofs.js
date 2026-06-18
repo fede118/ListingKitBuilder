@@ -34,15 +34,51 @@ function drawWatermark(ctx,W,H){
   ctx.restore();
 }
 
-// draw the white name box (proof 1)
+// greedily wrap `name` into at most maxLines lines that each fit maxW at the
+// current ctx.font; returns null when it can't fit (caller shrinks the font)
+function wrapText(ctx,name,maxW,maxLines){
+  const words = name.split(/\s+/).filter(Boolean);
+  if(!words.length) return [''];
+  const lines=[]; let line='';
+  for(const word of words){
+    const next = line ? line+' '+word : word;
+    if(ctx.measureText(next).width<=maxW || !line){
+      line=next;
+    } else {
+      lines.push(line); line=word;
+    }
+    if(lines.length>=maxLines) return null;       // ran out of lines
+  }
+  lines.push(line);
+  if(lines.length>maxLines) return null;
+  // a single word may still be wider than the box — reject so the font shrinks
+  if(lines.some(l=>ctx.measureText(l).width>maxW)) return null;
+  return lines;
+}
+
+// draw the white name box (proof 1); the box is kept within a 15% inner
+// margin of the image and the name wraps onto up to 3 lines when long
 function drawNameBox(ctx,W,H,name){
   const base = Math.min(W,H);
-  const fs = Math.max(16, Math.round(base*0.045));
-  const padX = Math.round(fs*0.85), padY = Math.round(fs*0.55);
-  ctx.font = `700 ${fs}px 'Space Mono', monospace`;
+  const MARGIN = 0.15;                              // inner padding from image edges
+  const maxBoxW = W*(1-MARGIN*2);
+  const MAX_LINES = 3;
+  let fs = Math.max(16, Math.round(base*0.045));
+  let padX, padY, lines;
+  // shrink the font until the wrapped name fits the box width and line budget
+  for(;;){
+    padX = Math.round(fs*0.85); padY = Math.round(fs*0.55);
+    ctx.font = `700 ${fs}px 'Space Mono', monospace`;
+    lines = wrapText(ctx, name, maxBoxW-padX*2, MAX_LINES);
+    if(lines || fs<=12) break;
+    fs--;
+  }
+  if(!lines) lines=[name];                          // tiny canvas fallback
   ctx.textBaseline='middle';
-  const tw = ctx.measureText(name).width;
-  const boxW = tw + padX*2, boxH = fs + padY*2;
+  const lineH = Math.round(fs*1.25);
+  const textW = Math.max(...lines.map(l=>ctx.measureText(l).width));
+  const boxW = Math.min(textW + padX*2, maxBoxW);
+  const boxH = lineH*lines.length + padY*2;
   const x = (W-boxW)/2, y = (H-boxH)/2;   // centred in the image
   ctx.save();
   ctx.shadowColor='rgba(22,35,61,.28)';
@@ -54,7 +90,8 @@ function drawNameBox(ctx,W,H,name){
   ctx.restore();
   ctx.fillStyle='#16233D';
   ctx.textAlign='center';
-  ctx.fillText(name, W/2, y+boxH/2+1);
+  const firstY = y+padY+lineH/2+1;
+  lines.forEach((l,i)=>ctx.fillText(l, W/2, firstY+i*lineH));
   ctx.textAlign='left';
 }
 
