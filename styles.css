@@ -150,6 +150,35 @@ input[type=text]:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px
 .seg button+button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--ink);color:var(--surface)}
 
+/* ---- storefront info text + preview ---- */
+.sf-grid{align-items:start}
+.sf-text{
+  width:100%;box-sizing:border-box;resize:vertical;min-height:150px;
+  font-family:var(--mono);font-size:13px;line-height:1.6;
+  padding:13px 14px;border:1px solid var(--line);border-radius:3px;
+  background:var(--surface-2);color:var(--ink);
+}
+.sf-text:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px rgba(224,161,43,.22)}
+.sf-prev-wrap{position:relative}
+.sf-preview{
+  width:100%;height:auto;display:block;
+  border:1px solid var(--line);border-radius:4px;background:var(--paper);
+}
+.sf-prev-arrow{
+  position:absolute;top:50%;transform:translateY(-50%);
+  width:34px;height:34px;border:1px solid var(--line);border-radius:50%;
+  background:var(--surface);color:var(--ink);font-size:18px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 4px rgba(22,35,61,.15);
+}
+.sf-prev-arrow.left{left:8px}
+.sf-prev-arrow.right{right:8px}
+.sf-prev-arrow:hover{border-color:var(--teal);color:var(--teal)}
+.sf-prev-label{
+  margin-top:8px;text-align:center;
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-soft);
+}
+
 /* ---- build button ---- */
 .build{
   width:100%;margin-top:6px;

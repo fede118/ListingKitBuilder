@@ -4,7 +4,7 @@
 import { $ } from './dom.js';
 import { state, fmtMeta } from './state.js';
 import { humanSize, sanitize } from './utils.js';
-import { makeProof } from './proofs.js';
+import { makeProof, renderPreview } from './proofs.js';
 import { idbPut, idbGet, idbDel } from './bench-storage.js';
 import { bindZone, markLoaded, markCleared } from './dropzone.js';
 import { invShow } from './inventory.js';
@@ -16,11 +16,13 @@ async function loadWatermark(f,z,persist=true){
   try{ state.wmBitmap = await createImageBitmap(f); }catch(_){ state.wmBitmap=null; }
   markLoaded(z,'Watermark set', f.name+' · '+humanSize(f.size));
   if(persist) idbPut('wm',f);
+  refreshPreview();
 }
 function clearWatermark(z){
   state.wmFile=null; state.wmBitmap=null;
   markCleared(z,'Drop watermark');
   idbDel('wm');
+  refreshPreview();
 }
 // license — persisted the same way
 function loadLicense(f,z,persist=true){
@@ -33,6 +35,14 @@ function clearLicense(z){
   markCleared(z,'Drop license');
   idbDel('lic');
 }
+
+// storefront info text — short, rarely changes, plain text, so it lives in
+// localStorage rather than the IndexedDB blob bench used for watermark/license.
+const SF_KEY='ps_sf_text';
+
+// re-renders the bench preview; assigned in initBuilder (no-op until then, so
+// the bench-load handlers below can call it safely during rehydrate).
+let refreshPreview=()=>{};
 
 // messaging
 function showMsg(kind,text){
@@ -78,6 +88,7 @@ function renderOutput(name,m,proofs,productZip,storeZip,onlyOne,noLic){
   lines.push(`   └ ${name}-watermark-1.${m.ext}  <span style="opacity:.6">(named)</span>`);
   lines.push(`   └ ${name}-watermark-2.${m.ext}  <span style="opacity:.6">(clean)</span>`);
   lines.push(`   └ ${name}-watermark-3.${m.ext}  <span style="opacity:.6">(zoom detail)</span>`);
+  if(proofs[3]) lines.push(`   └ ${name}-storefront-info.${m.ext}  <span style="opacity:.6">(info)</span>`);
   $('#kit-files').innerHTML=lines.join('<br>');
 
   // proofs
@@ -85,6 +96,7 @@ function renderOutput(name,m,proofs,productZip,storeZip,onlyOne,noLic){
   wrap.appendChild(proofCard(1,'NAMED',proofs[0],`${name}-watermark-1.${m.ext}`));
   wrap.appendChild(proofCard(2,'CLEAN',proofs[1],`${name}-watermark-2.${m.ext}`));
   wrap.appendChild(proofCard(3,'ZOOM DETAIL',proofs[2],`${name}-watermark-3.${m.ext}`));
+  if(proofs[3]) wrap.appendChild(proofCard(4,'STOREFRONT INFO',proofs[3],`${name}-storefront-info.${m.ext}`));
 
   // bulk downloads
   $('#dl-zip-name').textContent=`${name}.zip`;
@@ -121,10 +133,12 @@ async function build(){
     const srcFile = state.pngFile || state.jpgFile;
     const srcBitmap = await createImageBitmap(srcFile);
 
-    // 1: named, 2: plain, 3: cropped
+    // 1: named, 2: plain, 3: cropped, 4: storefront info (only if text was set)
+    const hasInfo = !!(state.sfText && state.sfText.trim());
     const p1 = await makeProof(srcBitmap,'named',name);
     const p2 = await makeProof(srcBitmap,'plain',name);
     const p3 = await makeProof(srcBitmap,'crop',name);
+    const p4 = hasInfo ? await makeProof(srcBitmap,'storefront',name,state.sfText) : null;
     srcBitmap.close && srcBitmap.close();
 
     // product zip — byte copies, no re-encode
@@ -139,11 +153,12 @@ async function build(){
     sz.file(`${name}-watermark-1.${m.ext}`, p1);
     sz.file(`${name}-watermark-2.${m.ext}`, p2);
     sz.file(`${name}-watermark-3.${m.ext}`, p3);
+    if(p4) sz.file(`${name}-storefront-info.${m.ext}`, p4);
     const storeZip = await sz.generateAsync({type:'blob'});
 
-    state.blobs={p1,p2,p3,productZip,storeZip};
+    state.blobs={p1,p2,p3,p4,productZip,storeZip};
 
-    renderOutput(name,m,[p1,p2,p3],productZip,storeZip,onlyOne,!state.licFile);
+    renderOutput(name,m,[p1,p2,p3,p4],productZip,storeZip,onlyOne,!state.licFile);
     $('#output').scrollIntoView({behavior:'smooth',block:'start'});
 
     if(onlyOne || !state.licFile){
@@ -169,18 +184,49 @@ export function initBuilder(){
     if(wm)  loadWatermark(wm, $('#dz-wm'), false);
     if(lic) loadLicense(lic, $('#dz-lic'), false);
   })();
+  // storefront info text — restore + persist on edit
+  const sfEl=$('#sf-text');
+  state.sfText = localStorage.getItem(SF_KEY) || '';
+  sfEl.value = state.sfText;
+
+  // preview carousel: cycle the three full-image proofs so you can see how the
+  // text lands in each. The zoom-detail crop is omitted (it has no box).
+  const PV_VIEWS=[['named','NAMED'],['clean','CLEAN · watermark only'],['storefront','STOREFRONT INFO']];
+  let pvIndex=0;
+  refreshPreview=()=>{
+    const [view,label]=PV_VIEWS[pvIndex];
+    $('#sf-prev-label').textContent=`${label}  ·  ${pvIndex+1}/${PV_VIEWS.length}`;
+    renderPreview(view, $('#f-name').value.trim()||'pattern-name', state.sfText);
+  };
+  const stepPreview=delta=>{ pvIndex=(pvIndex+delta+PV_VIEWS.length)%PV_VIEWS.length; refreshPreview(); };
+  $('#sf-prev-prev').addEventListener('click',()=>stepPreview(-1));
+  $('#sf-prev-next').addEventListener('click',()=>stepPreview(1));
+
+  let sfTimer;
+  sfEl.addEventListener('input', ()=>{
+    state.sfText = sfEl.value;
+    localStorage.setItem(SF_KEY, state.sfText);
+    clearTimeout(sfTimer);
+    sfTimer=setTimeout(refreshPreview, 150);
+  });
+  // the name only shows in the NAMED view, but refreshing always is harmless
+  $('#f-name').addEventListener('input', refreshPreview);
+  // initial preview — wait for the web font so canvas text matches the output
+  if(document.fonts && document.fonts.ready){ document.fonts.ready.then(refreshPreview); }
+  refreshPreview();
+
   // png original
   bindZone('#dz-png','#f-png', f=>f.type==='image/png', (f,z)=>{
-    state.pngFile=f; markLoaded(z,'PNG loaded', f.name+' · '+humanSize(f.size));
+    state.pngFile=f; markLoaded(z,'PNG loaded', f.name+' · '+humanSize(f.size)); refreshPreview();
   }, ['image/png']);
   // jpeg original
   bindZone('#dz-jpg','#f-jpg', f=>f.type==='image/jpeg', (f,z)=>{
-    state.jpgFile=f; markLoaded(z,'JPEG loaded', f.name+' · '+humanSize(f.size));
+    state.jpgFile=f; markLoaded(z,'JPEG loaded', f.name+' · '+humanSize(f.size)); refreshPreview();
   }, ['image/jpeg']);
 
   // sliders
-  $('#wm-op').addEventListener('input',e=>$('#wm-op-v').textContent=e.target.value+'%');
-  $('#wm-sz').addEventListener('input',e=>$('#wm-sz-v').textContent=e.target.value+'%');
+  $('#wm-op').addEventListener('input',e=>{ $('#wm-op-v').textContent=e.target.value+'%'; refreshPreview(); });
+  $('#wm-sz').addEventListener('input',e=>{ $('#wm-sz-v').textContent=e.target.value+'%'; refreshPreview(); });
 
   // format toggle
   $('#seg-fmt').addEventListener('click',e=>{

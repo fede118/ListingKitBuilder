@@ -6,6 +6,7 @@ export const state = {
   licFile:null,
   fmt:'jpg',
   pngFile:null, jpgFile:null,
+  sfText:'',        // storefront info text (bullets); persisted in localStorage
   blobs:{} // generated
 };
 
