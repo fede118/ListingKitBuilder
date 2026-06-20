@@ -7,6 +7,7 @@ export const state = {
   fmt:'jpg',
   pngFile:null, jpgFile:null,
   sfText:'',        // storefront info text (bullets); persisted in localStorage
+  fontFamily:'Space Mono',  // font for the proof name/info text; persisted
   blobs:{} // generated
 };
 

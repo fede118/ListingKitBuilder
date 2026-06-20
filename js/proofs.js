@@ -9,6 +9,10 @@ function canvasToBlob(canvas){
   return new Promise(res=>canvas.toBlob(res, m.mime, m.q));
 }
 
+// the proof text font, driven by the bench picker (state.fontFamily); a generic
+// fallback keeps text legible if the chosen face hasn't loaded yet
+const proofFont = (weight,fs) => `${weight} ${fs}px '${state.fontFamily}', sans-serif`;
+
 // tile the watermark on a uniform grid; each mark is scaled to fit its cell,
 // so coverage stays even regardless of the watermark's shape (tall or wide)
 function drawWatermark(ctx,W,H){
@@ -68,7 +72,7 @@ function drawNameBox(ctx,W,H,name){
   // shrink the font until the wrapped name fits the box width and line budget
   for(;;){
     padX = Math.round(fs*0.85); padY = Math.round(fs*0.55);
-    ctx.font = `700 ${fs}px 'Space Mono', monospace`;
+    ctx.font = proofFont(700, fs);
     lines = wrapText(ctx, name, maxBoxW-padX*2, MAX_LINES);
     if(lines || fs<=12) break;
     fs--;
@@ -132,7 +136,7 @@ function drawInfoBox(ctx,W,H,text){
   let fs=Math.max(13, Math.round(base*0.034));
   let layout=[], padX=0, padY=0, lineH=0, gap=0;
   for(;;){
-    ctx.font=`400 ${fs}px 'Space Mono', monospace`;
+    ctx.font=proofFont(400, fs);
     padX=Math.round(fs*1.1); padY=Math.round(fs*0.9);
     lineH=Math.round(fs*1.5); gap=Math.round(fs*0.6);
     const bulletW=ctx.measureText(bullet).width;

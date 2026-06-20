@@ -6,7 +6,7 @@ import { state, fmtMeta } from './state.js';
 import { humanSize, sanitize } from './utils.js';
 import { makeProof, renderPreview } from './proofs.js';
 import { idbPut, idbGet, idbDel } from './bench-storage.js';
-import { bindZone, markLoaded, markCleared } from './dropzone.js';
+import { bindZone, markLoaded, markCleared, markSub } from './dropzone.js';
 import { invShow } from './inventory.js';
 
 // watermark — persisted across refreshes (see bench-storage). `persist` is
@@ -43,6 +43,73 @@ const SF_KEY='ps_sf_text';
 // re-renders the bench preview; assigned in initBuilder (no-op until then, so
 // the bench-load handlers below can call it safely during rehydrate).
 let refreshPreview=()=>{};
+
+// ---- proof font ----
+// A curated set of storefront-friendly Google Fonts, plus an optional dropped
+// font. The selected family is persisted in localStorage; a dropped font's
+// bytes live in IndexedDB (key 'font') so it survives a refresh, fully offline.
+const FONT_KEY='ps_font';
+const CUSTOM_FAMILY='Custom font';            // the canvas family for a dropped font
+const CURATED=['Space Mono','Archivo','Montserrat','Poppins','Raleway','Quicksand',
+  'Oswald','Bebas Neue','Playfair Display','Lora','Cormorant Garamond',
+  'Libre Baskerville','Abril Fatface','Dancing Script','Pacifico'];
+// family -> promise that resolves once its stylesheet is parsed. Space Mono +
+// Archivo already ship on the page (see index.html / fonts.css).
+const _gfReady=new Map([['Space Mono',Promise.resolve()],['Archivo',Promise.resolve()]]);
+let _customFace=null;                          // tracked so a re-drop can replace it
+
+// inject a Google Fonts stylesheet for `family` once; resolves when the
+// stylesheet has loaded so the @font-face rules exist before we trigger a fetch
+function ensureGoogleFont(family){
+  if(_gfReady.has(family)) return _gfReady.get(family);
+  const link=document.createElement('link');
+  link.rel='stylesheet';
+  link.href=`https://fonts.googleapis.com/css2?family=${family.replace(/ /g,'+')}:wght@400;700&display=swap`;
+  const ready=new Promise(res=>{ link.onload=res; link.onerror=res; });
+  document.head.appendChild(link);
+  _gfReady.set(family, ready);
+  return ready;
+}
+// make sure `family` is loaded at both weights before it's drawn to canvas.
+// The stylesheet must be parsed first, otherwise document.fonts.load no-ops.
+async function loadFamily(family){
+  if(family!==CUSTOM_FAMILY) await ensureGoogleFont(family);
+  if(document.fonts && document.fonts.load){
+    try{ await Promise.all([
+      document.fonts.load(`400 24px '${family}'`),
+      document.fonts.load(`700 24px '${family}'`),
+    ]); }catch(_){}
+  }
+}
+// register a dropped font file as CUSTOM_FAMILY (all weights map to the one face)
+async function loadCustomFont(file, persist=true){
+  try{
+    const buf=await file.arrayBuffer();
+    const ff=new FontFace(CUSTOM_FAMILY, buf, {weight:'100 900'});
+    await ff.load();
+    if(_customFace){ try{ document.fonts.delete(_customFace); }catch(_){} }
+    document.fonts.add(ff); _customFace=ff;
+    if(persist) idbPut('font', file);
+    return true;
+  }catch(_){ return false; }
+}
+// add / refresh the "Custom · <file>" option in the picker
+function addCustomOption(label){
+  const sel=$('#font-pick');
+  let o=sel.querySelector(`option[value="${CUSTOM_FAMILY}"]`);
+  if(!o){ o=document.createElement('option'); o.value=CUSTOM_FAMILY; sel.appendChild(o); }
+  o.textContent='Custom · '+label;
+}
+function clearFont(z){
+  if(_customFace){ try{ document.fonts.delete(_customFace); }catch(_){} _customFace=null; }
+  idbDel('font');
+  const sel=$('#font-pick');
+  const o=sel.querySelector(`option[value="${CUSTOM_FAMILY}"]`); if(o) o.remove();
+  state.fontFamily='Space Mono'; sel.value='Space Mono';
+  localStorage.setItem(FONT_KEY,'Space Mono');
+  markCleared(z,'Drop font file');
+  refreshPreview();
+}
 
 // messaging
 function showMsg(kind,text){
@@ -124,9 +191,13 @@ async function build(){
   try{
     const m=fmtMeta();
 
-    // make sure the website font is loaded before drawing it onto canvas
+    // make sure the chosen proof font is loaded (both weights) before drawing
     if(document.fonts && document.fonts.load){
-      try{ await document.fonts.load("700 48px 'Space Mono'"); await document.fonts.ready; }catch(_){}
+      try{
+        await document.fonts.load(`700 48px '${state.fontFamily}'`);
+        await document.fonts.load(`400 48px '${state.fontFamily}'`);
+        await document.fonts.ready;
+      }catch(_){}
     }
 
     // source bitmap for proofs: prefer PNG (lossless) else JPG
@@ -184,6 +255,41 @@ export function initBuilder(){
     if(wm)  loadWatermark(wm, $('#dz-wm'), false);
     if(lic) loadLicense(lic, $('#dz-lic'), false);
   })();
+  // proof font picker — curated Google Fonts + an optional dropped font
+  const fontSel=$('#font-pick');
+  for(const fam of CURATED){
+    const o=document.createElement('option'); o.value=fam; o.textContent=fam;
+    o.style.fontFamily=`'${fam}', sans-serif`;   // styled once the face has loaded
+    fontSel.appendChild(o);
+  }
+  fontSel.addEventListener('change', async ()=>{
+    state.fontFamily=fontSel.value;
+    localStorage.setItem(FONT_KEY, fontSel.value);
+    await loadFamily(fontSel.value);
+    refreshPreview();
+  });
+  bindZone('#dz-font','#f-font', f=>/\.(ttf|otf|woff2?)$/i.test(f.name), async (f,z)=>{
+    if(!(await loadCustomFont(f))){ markSub(z,'Could not read that font'); return; }
+    markLoaded(z,'Font set', f.name+' · '+humanSize(f.size));
+    addCustomOption(f.name);
+    fontSel.value=CUSTOM_FAMILY; state.fontFamily=CUSTOM_FAMILY;
+    localStorage.setItem(FONT_KEY, CUSTOM_FAMILY);
+    refreshPreview();
+  }, [], clearFont);
+  // rehydrate the persisted font choice (and any dropped font) from storage
+  (async ()=>{
+    const savedFam=localStorage.getItem(FONT_KEY) || 'Space Mono';
+    const customBlob=await idbGet('font');
+    if(customBlob && await loadCustomFont(customBlob, false)){
+      addCustomOption(customBlob.name || 'font');
+      markLoaded($('#dz-font'),'Font set', (customBlob.name||'font'));
+    }
+    if(savedFam===CUSTOM_FAMILY && !_customFace){ state.fontFamily='Space Mono'; }
+    else { state.fontFamily=savedFam; if(savedFam!==CUSTOM_FAMILY) await loadFamily(savedFam); }
+    if(fontSel.querySelector(`option[value="${state.fontFamily}"]`)) fontSel.value=state.fontFamily;
+    refreshPreview();
+  })();
+
   // storefront info text — restore + persist on edit
   const sfEl=$('#sf-text');
   state.sfText = localStorage.getItem(SF_KEY) || '';
@@ -195,7 +301,10 @@ export function initBuilder(){
   let pvIndex=0;
   refreshPreview=()=>{
     const [view,label]=PV_VIEWS[pvIndex];
-    $('#sf-prev-label').textContent=`${label}  ·  ${pvIndex+1}/${PV_VIEWS.length}`;
+    const fontLabel = state.fontFamily===CUSTOM_FAMILY
+      ? (document.querySelector('#dz-font .dz-sub')?.textContent || CUSTOM_FAMILY)
+      : state.fontFamily;
+    $('#sf-prev-label').textContent=`${label}  ·  ${fontLabel}  ·  ${pvIndex+1}/${PV_VIEWS.length}`;
     renderPreview(view, $('#f-name').value.trim()||'pattern-name', state.sfText);
   };
   const stepPreview=delta=>{ pvIndex=(pvIndex+delta+PV_VIEWS.length)%PV_VIEWS.length; refreshPreview(); };

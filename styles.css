@@ -114,6 +114,7 @@ input[type=text]:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px
 .drop .dz-sub{font-family:var(--mono);font-size:11px;color:var(--ink-soft);word-break:break-all;max-width:100%}
 .drop.loaded .dz-main{color:var(--teal)}
 .drop input[type=file]{display:none}
+.drop.compact{min-height:84px;padding:14px}
 .dz-drive{
   margin-top:4px;
   font-family:var(--mono);font-size:11px;letter-spacing:.04em;
