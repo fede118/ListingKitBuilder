@@ -7,6 +7,7 @@ import { humanSize, sanitize } from './utils.js';
 import { makeProof, renderPreview } from './proofs.js';
 import { idbPut, idbGet, idbDel } from './bench-storage.js';
 import { bindZone, markLoaded, markCleared, markSub, flash } from './dropzone.js';
+import { openDrivePickerMulti, driveDownload } from './google-picker.js';
 import { invShow } from './inventory.js';
 
 // watermark — persisted across refreshes (see bench-storage). `persist` is
@@ -417,11 +418,34 @@ function markBundleZone(){
 
 function wireBundleZone(){
   const z=$('#dz-bundle'), input=$('#f-bundle');
-  z.addEventListener('click',()=>input.click());
+  const driveBtn=z.querySelector('.dz-drive');
+
+  z.addEventListener('click',e=>{ if(!e.target.closest('.dz-drive')) input.click(); });
   input.addEventListener('change',e=>{ addBundleFiles(e.target.files); input.value=''; });
   z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('over')});
   z.addEventListener('dragleave',()=>z.classList.remove('over'));
   z.addEventListener('drop',e=>{ e.preventDefault();z.classList.remove('over'); addBundleFiles(e.dataTransfer.files); });
+
+  if(driveBtn){
+    driveBtn.addEventListener('click', async e=>{
+      e.stopPropagation();
+      const label=driveBtn.textContent;
+      driveBtn.disabled=true; driveBtn.textContent='Opening…';
+      try{
+        const docs=await openDrivePickerMulti(['image/png','image/jpeg']);
+        if(docs.length){
+          driveBtn.textContent=`Downloading ${docs.length}…`;
+          const files=await Promise.all(docs.map(d=>driveDownload(d)));
+          await addBundleFiles(files);
+        }
+      }catch(err){
+        flash(z);
+        markSub(z,'Drive: '+(err.message||err));
+      }finally{
+        driveBtn.disabled=false; driveBtn.textContent=label;
+      }
+    });
+  }
 }
 
 export function initBuilder(){
