@@ -127,8 +127,14 @@ input[type=text]:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px
 .bundle-row.warn{border-color:var(--danger);background:#FBF1EE}
 .bundle-row .bundle-swatch{width:16px;height:16px;border-radius:3px;flex:none;border:1px solid rgba(0,0,0,.12)}
 .bundle-row input[type=text]{flex:none;width:130px;padding:7px 10px;font-size:13px}
-.bundle-row .bundle-files{font-family:var(--mono);font-size:11px;color:var(--ink-soft);word-break:break-all}
+.bundle-row .bundle-files{flex:1;font-family:var(--mono);font-size:11px;color:var(--ink-soft);word-break:break-all}
 .bundle-row.warn .bundle-files{color:var(--danger)}
+.bundle-row .bundle-del{
+  flex:none;width:26px;height:26px;line-height:1;font-size:18px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:3px;background:var(--surface);color:var(--ink-soft);
+}
+.bundle-row .bundle-del:hover{border-color:var(--danger);color:var(--danger);background:var(--surface-2)}
 .dz-drive{
   margin-top:4px;
   font-family:var(--mono);font-size:11px;letter-spacing:.04em;

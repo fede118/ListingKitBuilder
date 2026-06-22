@@ -374,6 +374,19 @@ async function rebuildVariations(){
   refreshPreview();
 }
 
+// drop one variation: pull its files out of the dropped set and forget its
+// cached label/bitmap/swatch, then re-derive. Lets a single mistaken upload be
+// removed without clearing the whole bundle.
+function removeVariation(stem){
+  _bundleFiles=_bundleFiles.filter(f=>baseStem(f.name)!==stem);
+  const bmp=_bundleBitmaps.get(stem);
+  if(bmp && bmp.close){ try{ bmp.close(); }catch(_){} }
+  _bundleBitmaps.delete(stem);
+  _bundleSwatch.delete(stem);
+  _bundleLabels.delete(stem);
+  rebuildVariations();
+}
+
 function renderBundleRows(){
   const wrap=$('#bundle-rows'); if(!wrap) return;
   wrap.innerHTML='';
@@ -394,12 +407,14 @@ function renderBundleRows(){
     row.innerHTML=`
       <span class="bundle-swatch" style="background:${sw||'var(--line)'}"></span>
       <input type="text" value="${escapeAttr(v.label)}" aria-label="Variation label">
-      <span class="bundle-files">${filesLabel}</span>`;
+      <span class="bundle-files">${filesLabel}</span>
+      <button type="button" class="bundle-del" aria-label="Remove ${escapeAttr(v.label)}" title="Remove">×</button>`;
     const input=row.querySelector('input');
     input.addEventListener('input',()=>{
       v.label=input.value;
       _bundleLabels.set(v.stem, input.value);
     });
+    row.querySelector('.bundle-del').addEventListener('click',()=>removeVariation(v.stem));
     wrap.appendChild(row);
   });
 }
