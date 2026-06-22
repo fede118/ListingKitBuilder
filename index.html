@@ -126,32 +126,50 @@
       <span class="hint">Upload both originals — they're copied in untouched</span>
     </div>
     <div class="panel-body">
+      <div class="seg" id="seg-mode" style="margin-bottom:20px">
+        <button class="on" data-mode="single">Single pattern</button>
+        <button data-mode="bundle">Bundle</button>
+      </div>
+
       <label class="field">
-        <span class="field-label">Pattern name<span class="req">*</span><span class="field-note">used for every filename</span></span>
+        <span class="field-label">Pattern name<span class="req">*</span><span class="field-note" id="name-note">used for every filename</span></span>
         <input type="text" id="f-name" placeholder="folk-floral-indigo" autocomplete="off">
       </label>
 
-      <div class="grid2">
-        <div>
-          <span class="field-label">PNG original<span class="req">*</span></span>
-          <div class="drop" id="dz-png">
-            <div class="dz-icon">[ PNG ]</div>
-            <div class="dz-main">Drop PNG</div>
-            <div class="dz-sub">copied into the zip as-is</div>
-            <button type="button" class="dz-drive">⬇ From Drive</button>
-            <input type="file" id="f-png" accept="image/png">
+      <div id="single-inputs">
+        <div class="grid2">
+          <div>
+            <span class="field-label">PNG original<span class="req">*</span></span>
+            <div class="drop" id="dz-png">
+              <div class="dz-icon">[ PNG ]</div>
+              <div class="dz-main">Drop PNG</div>
+              <div class="dz-sub">copied into the zip as-is</div>
+              <button type="button" class="dz-drive">⬇ From Drive</button>
+              <input type="file" id="f-png" accept="image/png">
+            </div>
+          </div>
+          <div>
+            <span class="field-label">JPEG original<span class="req">*</span></span>
+            <div class="drop" id="dz-jpg">
+              <div class="dz-icon">[ JPG ]</div>
+              <div class="dz-main">Drop JPEG</div>
+              <div class="dz-sub">copied into the zip as-is</div>
+              <button type="button" class="dz-drive">⬇ From Drive</button>
+              <input type="file" id="f-jpg" accept="image/jpeg">
+            </div>
           </div>
         </div>
-        <div>
-          <span class="field-label">JPEG original<span class="req">*</span></span>
-          <div class="drop" id="dz-jpg">
-            <div class="dz-icon">[ JPG ]</div>
-            <div class="dz-main">Drop JPEG</div>
-            <div class="dz-sub">copied into the zip as-is</div>
-            <button type="button" class="dz-drive">⬇ From Drive</button>
-            <input type="file" id="f-jpg" accept="image/jpeg">
-          </div>
+      </div>
+
+      <div id="bundle-inputs" style="display:none">
+        <span class="field-label">Bundle files<span class="req">*</span><span class="field-note">drop every PNG + JPG — paired by filename</span></span>
+        <div class="drop" id="dz-bundle">
+          <div class="dz-icon">[ PNG · JPG ]</div>
+          <div class="dz-main">Drop all bundle files</div>
+          <div class="dz-sub">one png + jpg per colour · or click to choose</div>
+          <input type="file" id="f-bundle" accept="image/png,image/jpeg" multiple>
         </div>
+        <div id="bundle-rows" class="bundle-rows"></div>
       </div>
 
       <button class="build" id="build" style="margin-top:22px">

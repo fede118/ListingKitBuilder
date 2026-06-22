@@ -218,6 +218,16 @@ async function previewBackground(){
   catch(_){ _pvBitmap=null; _pvBitmapFile=null; }
   return _pvBitmap;
 }
+// the bitmaps backing the preview: every loaded variation in bundle mode (so
+// the preview shows the real mosaic), or the single cached original otherwise.
+async function previewBitmaps(){
+  if(state.bundleMode){
+    return state.variations.map(v=>v.bitmap).filter(Boolean);
+  }
+  const bmp=await previewBackground();
+  return bmp ? [bmp] : [];
+}
+
 // render one of the three storefront layouts into the bench preview canvas.
 // view: 'named' (name box) | 'clean' (watermark only) | 'storefront' (info box).
 // The canvas is sized to the real image's aspect when an original is loaded so
@@ -225,36 +235,79 @@ async function previewBackground(){
 export async function renderPreview(view, name, text){
   const canvas=$('#sf-preview'); if(!canvas) return;
   const ctx=canvas.getContext('2d');
-  const bmp=await previewBackground();
-  const d = bmp ? fitDims(bmp.width,bmp.height,560) : {w:440,h:440};
+  const bmps=await previewBitmaps();
+  const base=bmps[0];
+  const d = base ? fitDims(base.width,base.height,560) : {w:440,h:440};
   if(canvas.width!==d.w) canvas.width=d.w;
   if(canvas.height!==d.h) canvas.height=d.h;
   const W=canvas.width, H=canvas.height;
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
-  if(bmp) ctx.drawImage(bmp,0,0,W,H);
+  if(bmps.length) drawMosaic(ctx,W,H,bmps);
   else ctx.drawImage(sampleTexture(W,H),0,0,W,H);
   drawWatermark(ctx,W,H);
   if(view==='named') drawNameBox(ctx,W,H, name||'pattern-name');
   else if(view==='storefront') drawInfoBox(ctx,W,H,text);
 }
 
-export async function makeProof(srcBitmap, kind, name, info){
+// ---- mosaic background ----
+// Tile `bitmaps` across the W×H canvas so the result reads as ONE pattern made
+// of coloured regions: each tile draws *its own slice* of its variation, taken
+// from the matching fractional region of that variation's image. With one
+// bitmap this is a plain full-bleed draw, so the single-listing path reuses it.
+// Layout: 1–3 variations sit in a single row (halves / thirds); 4+ fall into a
+// near-square grid whose last row stretches to fill any remainder (no gaps).
+function mosaicGrid(n){
+  const cols = n<=3 ? n : Math.ceil(Math.sqrt(n));
+  return { cols, rows: Math.ceil(n/cols) };
+}
+function drawMosaic(ctx,W,H,bitmaps){
+  const n=bitmaps.length;
+  if(!n) return;
+  const {cols,rows}=mosaicGrid(n);
+  let idx=0;
+  for(let r=0;r<rows && idx<n;r++){
+    const inRow=Math.min(cols, n-idx);              // last row may hold fewer
+    const y0=Math.round(r*H/rows), y1=Math.round((r+1)*H/rows);
+    for(let c=0;c<inRow;c++,idx++){
+      const x0=Math.round(c*W/inRow), x1=Math.round((c+1)*W/inRow);
+      const bmp=bitmaps[idx]; if(!bmp) continue;
+      // source rect = the same fractional region of this variation's image
+      const sx=(x0/W)*bmp.width,  sw=((x1-x0)/W)*bmp.width;
+      const sy=(y0/H)*bmp.height, sh=((y1-y0)/H)*bmp.height;
+      ctx.drawImage(bmp, sx,sy,sw,sh, x0,y0, x1-x0, y1-y0);
+    }
+  }
+}
+
+// `bitmaps` is an array — one entry for a single listing, N for a bundle. The
+// full-image proofs (named / clean / storefront) draw the mosaic; the zoom crop
+// always zooms the first variation only (one detail shot reads cleaner than a
+// crop straddling colour seams).
+export async function makeProof(bitmaps, kind, name, info){
   const canvas = $('#work');
   const ctx = canvas.getContext('2d');
-  let sx=0, sy=0, sw=srcBitmap.width, sh=srcBitmap.height;
+  const base = bitmaps[0];
   if(kind==='crop'){
-    sw = srcBitmap.width*CROP_FRAC;
-    sh = srcBitmap.height*CROP_FRAC;
-    sx = (srcBitmap.width-sw)/2;
-    sy = (srcBitmap.height-sh)/2;
+    const sw = base.width*CROP_FRAC;
+    const sh = base.height*CROP_FRAC;
+    const sx = (base.width-sw)/2;
+    const sy = (base.height-sh)/2;
+    const d = fitDims(sw,sh,PREVIEW_MAX);
+    canvas.width=d.w; canvas.height=d.h;
+    ctx.clearRect(0,0,d.w,d.h);
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(0,0,d.w,d.h);
+    ctx.drawImage(base, sx,sy,sw,sh, 0,0,d.w,d.h);
+    drawWatermark(ctx,d.w,d.h);
+    return canvasToBlob(canvas);
   }
-  const d = fitDims(sw,sh,PREVIEW_MAX);
+  const d = fitDims(base.width,base.height,PREVIEW_MAX);   // canvas keeps the pattern's aspect
   canvas.width=d.w; canvas.height=d.h;
   ctx.clearRect(0,0,d.w,d.h);
   ctx.fillStyle='#ffffff';
   ctx.fillRect(0,0,d.w,d.h);              // flatten background (no transparency in JPG)
-  ctx.drawImage(srcBitmap, sx,sy,sw,sh, 0,0,d.w,d.h);
+  drawMosaic(ctx,d.w,d.h,bitmaps);
   drawWatermark(ctx,d.w,d.h);
   if(kind==='named') drawNameBox(ctx,d.w,d.h,name);
   if(kind==='storefront') drawInfoBox(ctx,d.w,d.h,info);

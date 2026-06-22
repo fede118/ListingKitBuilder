@@ -6,7 +6,7 @@ import { state, fmtMeta } from './state.js';
 import { humanSize, sanitize } from './utils.js';
 import { makeProof, renderPreview } from './proofs.js';
 import { idbPut, idbGet, idbDel } from './bench-storage.js';
-import { bindZone, markLoaded, markCleared, markSub } from './dropzone.js';
+import { bindZone, markLoaded, markCleared, markSub, flash } from './dropzone.js';
 import { invShow } from './inventory.js';
 
 // watermark — persisted across refreshes (see bench-storage). `persist` is
@@ -140,13 +140,14 @@ function proofCard(num,label,blob,filename){
   return div;
 }
 
-function renderOutput(name,m,proofs,productZip,storeZip,onlyOne,noLic){
+function renderOutput(name,m,proofs,productZip,storeZip,productFiles,noLic){
   $('#out-title').textContent=name;
-  // file manifest
+  // file manifest — productFiles is [{name,size}], one per byte-copied original
   const lines=[];
   lines.push(`<b>${name}.zip</b>  ·  the buyer's download`);
-  if(state.pngFile) lines.push(`   └ ${name}.png  <span style="opacity:.6">(${humanSize(state.pngFile.size)}, untouched)</span>`);
-  if(state.jpgFile) lines.push(`   └ ${name}.jpg  <span style="opacity:.6">(${humanSize(state.jpgFile.size)}, untouched)</span>`);
+  for(const pf of productFiles){
+    lines.push(`   └ ${pf.name}  <span style="opacity:.6">(${humanSize(pf.file.size)}, untouched)</span>`);
+  }
   lines.push(noLic
     ? `   └ <span style="color:var(--danger)">license — not set</span>`
     : `   └ <span class="lic">${state.licFile.name}</span>`);
@@ -175,16 +176,53 @@ function renderOutput(name,m,proofs,productZip,storeZip,onlyOne,noLic){
   invShow(name);
 }
 
+// Collect the proof-source bitmaps + the byte-copy product files for the zip.
+// Single mode: one original (png/jpg) → one bitmap, one or two product files.
+// Bundle mode: one tile per variation → its bitmap and its png/jpg, filenames
+// suffixed with the variation's (sanitized, de-duped) label.
+function collectBuild(name){
+  if(!state.bundleMode){
+    const srcFile = state.pngFile || state.jpgFile;
+    const productFiles=[];
+    if(state.pngFile) productFiles.push({name:name+'.png', file:state.pngFile});
+    if(state.jpgFile) productFiles.push({name:name+'.jpg', file:state.jpgFile});
+    return {
+      bitmaps:[srcFile], productFiles,
+      incomplete: !state.pngFile || !state.jpgFile,
+      ownBitmaps:true,   // freshly decoded below; safe to close after build
+    };
+  }
+  const bitmaps=[], productFiles=[];
+  const used=new Set();
+  let incomplete=false;
+  state.variations.forEach((v,i)=>{
+    if(!v.bitmap) return;
+    bitmaps.push(v.bitmap);
+    let lab=sanitize(v.label||'').replace(/\s+/g,'-');
+    if(!lab) lab='v'+(i+1);
+    let base=`${name}-${lab}`;
+    while(used.has(base)) base+='-'+(i+1);   // guard duplicate labels
+    used.add(base);
+    if(v.pngFile) productFiles.push({name:base+'.png', file:v.pngFile});
+    if(v.jpgFile) productFiles.push({name:base+'.jpg', file:v.jpgFile});
+    if(!v.pngFile || !v.jpgFile) incomplete=true;
+  });
+  return {bitmaps, productFiles, incomplete, ownBitmaps:false};
+}
+
 // ---- main build ----
 async function build(){
   clearMsg();
   const raw=$('#f-name').value;
   const name=sanitize(raw);
   if(!name){ showMsg('err','Add a pattern name first — it names every file.'); return; }
-  if(!state.pngFile && !state.jpgFile){ showMsg('err','Upload at least one original (PNG or JPEG).'); return; }
+  if(state.bundleMode){
+    if(!state.variations.some(v=>v.bitmap)){ showMsg('err','Drop the bundle files first — at least one variation with an image.'); return; }
+  } else if(!state.pngFile && !state.jpgFile){
+    showMsg('err','Upload at least one original (PNG or JPEG).'); return;
+  }
   if(!state.wmBitmap){ showMsg('err','Set a watermark on the bench above — the proofs need it.'); return; }
 
-  const onlyOne = !state.pngFile || !state.jpgFile;
   const btn=$('#build'); const old=btn.innerHTML;
   btn.disabled=true; btn.innerHTML='Building…';
 
@@ -200,22 +238,24 @@ async function build(){
       }catch(_){}
     }
 
-    // source bitmap for proofs: prefer PNG (lossless) else JPG
-    const srcFile = state.pngFile || state.jpgFile;
-    const srcBitmap = await createImageBitmap(srcFile);
+    const job = collectBuild(name);
+    // source bitmaps for the proofs. Single mode holds a File and decodes here
+    // (prefer PNG, lossless); bundle mode reuses the already-decoded tiles.
+    const bitmaps = job.ownBitmaps
+      ? [await createImageBitmap(job.bitmaps[0])]
+      : job.bitmaps;
 
-    // 1: named, 2: plain, 3: cropped, 4: storefront info (only if text was set)
+    // 1: named, 2: plain, 3: cropped (first tile only), 4: storefront info
     const hasInfo = !!(state.sfText && state.sfText.trim());
-    const p1 = await makeProof(srcBitmap,'named',name);
-    const p2 = await makeProof(srcBitmap,'plain',name);
-    const p3 = await makeProof(srcBitmap,'crop',name);
-    const p4 = hasInfo ? await makeProof(srcBitmap,'storefront',name,state.sfText) : null;
-    srcBitmap.close && srcBitmap.close();
+    const p1 = await makeProof(bitmaps,'named',name);
+    const p2 = await makeProof(bitmaps,'plain',name);
+    const p3 = await makeProof(bitmaps,'crop',name);
+    const p4 = hasInfo ? await makeProof(bitmaps,'storefront',name,state.sfText) : null;
+    if(job.ownBitmaps) bitmaps[0].close && bitmaps[0].close();
 
     // product zip — byte copies, no re-encode
     const zip = new JSZip();
-    if(state.pngFile) zip.file(name+'.png', state.pngFile);
-    if(state.jpgFile) zip.file(name+'.jpg', state.jpgFile);
+    for(const pf of job.productFiles) zip.file(pf.name, pf.file);
     if(state.licFile) zip.file(state.licFile.name, state.licFile);   // keep the license's original filename
     const productZip = await zip.generateAsync({type:'blob'});
 
@@ -229,12 +269,12 @@ async function build(){
 
     state.blobs={p1,p2,p3,p4,productZip,storeZip};
 
-    renderOutput(name,m,[p1,p2,p3,p4],productZip,storeZip,onlyOne,!state.licFile);
+    renderOutput(name,m,[p1,p2,p3,p4],productZip,storeZip,job.productFiles,!state.licFile);
     $('#output').scrollIntoView({behavior:'smooth',block:'start'});
 
-    if(onlyOne || !state.licFile){
+    if(job.incomplete || !state.licFile){
       const bits=[];
-      if(onlyOne) bits.push('only one original was provided');
+      if(job.incomplete) bits.push(state.bundleMode ? 'some variations are missing a png or jpg' : 'only one original was provided');
       if(!state.licFile) bits.push('no license PDF was set');
       showMsg('warn','Built — note: '+bits.join(', ')+'. The zip contains what you gave it.');
     }
@@ -243,6 +283,145 @@ async function build(){
   }finally{
     btn.disabled=false; btn.innerHTML=old;
   }
+}
+
+// ---- bundle input ----
+// All dropped bundle files live here (union across multiple drops); variations
+// are re-derived from this list each time. Edited labels and decoded bitmaps are
+// cached by filename-stem so a re-drop doesn't lose edits or re-decode images.
+let _bundleFiles=[];
+const _bundleLabels=new Map();   // stem -> user-edited label
+const _bundleBitmaps=new Map();  // stem -> ImageBitmap
+const _bundleSwatch=new Map();   // stem -> 'rgb(...)' average colour for the chip
+
+const baseStem = fname => fname.replace(/\.[^.]+$/,'');
+const escapeAttr = s => String(s).replace(/"/g,'&quot;');
+
+// derive a short label per variation by stripping the prefix + suffix common to
+// every stem — folk-floral-red / folk-floral-blue → "red" / "blue"
+function deriveLabels(stems){
+  if(stems.length<=1) return stems.slice();
+  let pre=stems[0], suf=stems[0];
+  for(const s of stems){
+    while(pre && !s.startsWith(pre)) pre=pre.slice(0,-1);
+    while(suf && !s.endsWith(suf)) suf=suf.slice(1);
+  }
+  return stems.map(s=>{
+    const end=Math.max(pre.length, s.length-suf.length);
+    const lab=s.slice(pre.length,end).replace(/^[-_ ]+|[-_ ]+$/g,'');
+    return lab || s;
+  });
+}
+
+// pair png + jpg sharing a stem into one variation
+function pairBundle(files){
+  const map=new Map();
+  for(const f of files){
+    const isPng=f.type==='image/png', isJpg=f.type==='image/jpeg';
+    if(!isPng && !isJpg) continue;
+    const stem=baseStem(f.name);
+    let e=map.get(stem); if(!e){ e={stem,pngFile:null,jpgFile:null}; map.set(stem,e); }
+    if(isPng) e.pngFile=f; else e.jpgFile=f;
+  }
+  const entries=[...map.values()];
+  const labels=deriveLabels(entries.map(e=>e.stem));
+  entries.forEach((e,i)=>{ e.label=labels[i]; });
+  return entries;
+}
+
+// 1×1 average colour, used only for the variation swatch chip
+function avgColor(bmp){
+  try{
+    const c=document.createElement('canvas'); c.width=1; c.height=1;
+    const x=c.getContext('2d'); x.drawImage(bmp,0,0,1,1);
+    const [r,g,b]=x.getImageData(0,0,1,1).data;
+    return `rgb(${r},${g},${b})`;
+  }catch(_){ return null; }
+}
+
+async function addBundleFiles(fileList){
+  const incoming=[...fileList].filter(f=>f.type==='image/png'||f.type==='image/jpeg');
+  if(!incoming.length){ flash($('#dz-bundle')); return; }
+  for(const f of incoming){
+    if(_bundleFiles.some(x=>x.name===f.name)) continue;   // dedupe by name
+    // snapshot the bytes now (same reasoning as bindZone) so a later build
+    // doesn't fail if the file is moved/re-exported on disk
+    let stable=f;
+    try{ const buf=await f.arrayBuffer(); stable=new File([buf],f.name,{type:f.type}); }catch(_){}
+    _bundleFiles.push(stable);
+  }
+  await rebuildVariations();
+}
+
+async function rebuildVariations(){
+  const vars=pairBundle(_bundleFiles);
+  for(const v of vars){
+    if(_bundleLabels.has(v.stem)) v.label=_bundleLabels.get(v.stem);
+    const src=v.pngFile||v.jpgFile;
+    if(src && !_bundleBitmaps.has(v.stem)){
+      try{
+        const bmp=await createImageBitmap(src);
+        _bundleBitmaps.set(v.stem, bmp);
+        _bundleSwatch.set(v.stem, avgColor(bmp));
+      }catch(_){ _bundleBitmaps.set(v.stem, null); }
+    }
+    v.bitmap=_bundleBitmaps.get(v.stem)||null;
+  }
+  state.variations=vars;
+  renderBundleRows();
+  markBundleZone();
+  refreshPreview();
+}
+
+function renderBundleRows(){
+  const wrap=$('#bundle-rows'); if(!wrap) return;
+  wrap.innerHTML='';
+  const vars=state.variations;
+  if(!vars.length) return;
+  const count=document.createElement('div');
+  count.className='bundle-count';
+  count.textContent=`${vars.length} variation${vars.length>1?'s':''} detected`;
+  wrap.appendChild(count);
+  vars.forEach((v,i)=>{
+    const incomplete=!v.pngFile||!v.jpgFile;
+    const row=document.createElement('div');
+    row.className='bundle-row'+(incomplete?' warn':'');
+    const sw=_bundleSwatch.get(v.stem);
+    const filesLabel=incomplete
+      ? (v.pngFile?'jpg missing — png only':'png missing — jpg only')
+      : 'png · jpg';
+    row.innerHTML=`
+      <span class="bundle-swatch" style="background:${sw||'var(--line)'}"></span>
+      <input type="text" value="${escapeAttr(v.label)}" aria-label="Variation label">
+      <span class="bundle-files">${filesLabel}</span>`;
+    const input=row.querySelector('input');
+    input.addEventListener('input',()=>{
+      v.label=input.value;
+      _bundleLabels.set(v.stem, input.value);
+    });
+    wrap.appendChild(row);
+  });
+}
+
+function markBundleZone(){
+  const z=$('#dz-bundle'); if(!z) return;
+  const n=_bundleFiles.length;
+  z.classList.toggle('loaded', n>0);
+  z.querySelector('.dz-main').textContent = n
+    ? `${n} file${n>1?'s':''} loaded`
+    : 'Drop all bundle files';
+  z.querySelector('.dz-sub').textContent = n
+    ? 'drop more or click to add'
+    : 'one png + jpg per colour · or click to choose';
+}
+
+function wireBundleZone(){
+  const z=$('#dz-bundle'), input=$('#f-bundle');
+  z.addEventListener('click',()=>input.click());
+  input.addEventListener('change',e=>{ addBundleFiles(e.target.files); input.value=''; });
+  z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('over')});
+  z.addEventListener('dragleave',()=>z.classList.remove('over'));
+  z.addEventListener('drop',e=>{ e.preventDefault();z.classList.remove('over'); addBundleFiles(e.dataTransfer.files); });
 }
 
 export function initBuilder(){
@@ -343,6 +522,19 @@ export function initBuilder(){
     state.fmt=b.dataset.fmt;
     [...e.currentTarget.children].forEach(c=>c.classList.toggle('on',c===b));
   });
+
+  // single / bundle mode toggle
+  $('#seg-mode').addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    state.bundleMode = b.dataset.mode==='bundle';
+    [...e.currentTarget.children].forEach(c=>c.classList.toggle('on',c===b));
+    $('#single-inputs').style.display = state.bundleMode?'none':'';
+    $('#bundle-inputs').style.display = state.bundleMode?'':'none';
+    $('#name-note').textContent = state.bundleMode
+      ? 'base name — each colour is appended' : 'used for every filename';
+    refreshPreview();
+  });
+  wireBundleZone();
 
   $('#build').addEventListener('click', build);
 }

@@ -115,6 +115,20 @@ input[type=text]:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px
 .drop.loaded .dz-main{color:var(--teal)}
 .drop input[type=file]{display:none}
 .drop.compact{min-height:84px;padding:14px}
+
+/* ---- bundle variation rows ---- */
+.bundle-rows{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.bundle-rows:empty{margin-top:0}
+.bundle-count{font-family:var(--mono);font-size:12px;color:var(--ink-soft);margin-bottom:2px}
+.bundle-row{
+  display:flex;align-items:center;gap:12px;
+  padding:9px 13px;border:1px solid var(--line);border-radius:3px;background:var(--surface-2);
+}
+.bundle-row.warn{border-color:var(--danger);background:#FBF1EE}
+.bundle-row .bundle-swatch{width:16px;height:16px;border-radius:3px;flex:none;border:1px solid rgba(0,0,0,.12)}
+.bundle-row input[type=text]{flex:none;width:130px;padding:7px 10px;font-size:13px}
+.bundle-row .bundle-files{font-family:var(--mono);font-size:11px;color:var(--ink-soft);word-break:break-all}
+.bundle-row.warn .bundle-files{color:var(--danger)}
 .dz-drive{
   margin-top:4px;
   font-family:var(--mono);font-size:11px;letter-spacing:.04em;
