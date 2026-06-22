@@ -32,6 +32,10 @@ export function renderInvSummary(total, cats){
 }
 export function renderCategorySelect(cats){
   const sel=$('#inv-cat'); sel.innerHTML='';
+  const placeholder=document.createElement('option');
+  placeholder.value=''; placeholder.textContent='Select a category…';
+  placeholder.disabled=true; placeholder.selected=true;
+  sel.appendChild(placeholder);
   for(const c of cats){ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); }
   const newOpt=document.createElement('option'); newOpt.value='__new__'; newOpt.textContent='+ Add new category…';
   sel.appendChild(newOpt);

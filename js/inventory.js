@@ -196,7 +196,7 @@ export function initInventory(){
     const cats=[...$('#inv-cat').options].filter(o=>o.value!=='__new__').map(o=>o.value);
     if(!this.value.trim()&&cats.length){
       this.style.display='none';
-      const sel=$('#inv-cat'); sel.style.display=''; sel.value=cats[0];
+      const sel=$('#inv-cat'); sel.style.display=''; sel.value='';
     }
   });
 
@@ -207,7 +207,7 @@ export function initInventory(){
     const title=$('#inv-title').value.trim();
     const link=$('#inv-link').value.trim();
     const notes=$('#inv-notes').value.trim();
-    if(!cat){ invSetStatus('Enter a category.','err'); return; }
+    if(!cat){ invSetStatus(isNewCat?'Enter a category.':'Choose a category.','err'); return; }
     if(!title){ invSetStatus('Enter a title.','err'); return; }
     const btn=$('#inv-save'); btn.disabled=true;
     invSetStatus('Saving…','');
